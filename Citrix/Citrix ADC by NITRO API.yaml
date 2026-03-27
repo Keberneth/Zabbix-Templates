@@ -1,0 +1,2625 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: c2e076bb4255499886a5b6b4ca5262a5
+      name: 'Templates/Network devices'
+  templates:
+    - uuid: e5205d7c24e64fe2b6833a7e7ff20d6d
+      template: 'Citrix ADC by NITRO API'
+      name: 'Citrix ADC by NITRO API'
+      description: |
+        API-only monitoring template for Citrix ADC / NetScaler using the NITRO API.
+        
+        The template is intentionally designed for low operational noise:
+        - one master SCRIPT item polls Citrix ADC and returns a single JSON document
+        - dependent items and discovery rules use that JSON, so API/auth/network failures raise one clear problem instead of hundreds of unsupported items
+        - VIP and pool alerts ignore Out of Service / disabled states by default
+        - per-member alerts are disabled by default and can be enabled only for selected pools
+        
+        Covered areas:
+        - appliance health and throughput
+        - HA health
+        - load-balancing VIPs (lbvserver)
+        - service groups / backend pools
+        - pool members
+      vendor:
+        name: Keberneth
+        version: '7.0.0'
+      groups:
+        - name: 'Templates/Network devices'
+      items:
+        - uuid: eb20758c63f740a6bf08cdaa429c0c4c
+          name: 'Citrix ADC: Appliance raw data'
+          type: DEPENDENT
+          key: citrix.adc.appliance.raw
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.appliance
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: citrix.adc.get
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 156be45036374b82b777125f17be3bd3
+          name: 'Citrix ADC: Collect NITRO data'
+          type: SCRIPT
+          key: citrix.adc.get
+          delay: '{$CITRIX.ADC.DATA.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var params = JSON.parse(value);
+            
+            function str(v) {
+                return (v === null || typeof v === 'undefined') ? '' : String(v);
+            }
+            
+            function trim(v) {
+                return str(v).replace(/^\s+|\s+$/g, '');
+            }
+            
+            function upper(v) {
+                return trim(v).replace(/_/g, ' ').toUpperCase();
+            }
+            
+            function isArray(v) {
+                return Object.prototype.toString.call(v) === '[object Array]';
+            }
+            
+            function array(v) {
+                return isArray(v) ? v : [];
+            }
+            
+            function object(v) {
+                return (v && typeof v === 'object' && !isArray(v)) ? v : {};
+            }
+            
+            function toNum(v, d) {
+                var n = Number(v);
+                return isNaN(n) ? (typeof d === 'undefined' ? 0 : d) : n;
+            }
+            
+            function uniqueSorted(list) {
+                var map = {},
+                    out = [],
+                    i,
+                    key;
+                for (i = 0; i < list.length; i++) {
+                    key = trim(list[i]);
+                    if (key !== '') {
+                        map[key] = 1;
+                    }
+                }
+            
+                for (key in map) {
+                    if (map.hasOwnProperty(key)) {
+                        out.push(key);
+                    }
+                }
+            
+                out.sort();
+                return out;
+            }
+            
+            function getArray(data, key) {
+                if (!data || typeof data[key] === 'undefined') {
+                    return [];
+                }
+            
+                if (isArray(data[key])) {
+                    return data[key];
+                }
+            
+                if (typeof data[key] === 'object' && data[key] !== null) {
+                    return [data[key]];
+                }
+            
+                return [];
+            }
+            
+            function getFirst(data, key) {
+                var arr = getArray(data, key);
+                return arr.length ? object(arr[0]) : {};
+            }
+            
+            function stateTextFromCode(code) {
+                switch (code) {
+                    case 1:
+                        return 'Up';
+                    case 2:
+                        return 'Down';
+                    case 3:
+                        return 'Out of service';
+                    default:
+                        return 'Unknown';
+                }
+            }
+            
+            function haTextFromCode(code) {
+                switch (code) {
+                    case 1:
+                        return 'Up';
+                    case 2:
+                        return 'Down';
+                    case 3:
+                        return 'Inactive';
+                    default:
+                        return 'Unknown';
+                }
+            }
+            
+            function mapVipState(v) {
+                var s = upper(v);
+            
+                if (s === '7' || s === 'UP' || s === 'BUSY' || s === '3') {
+                    return {code: 1, text: 'Up'};
+                }
+            
+                if (s === '4' || s === '5' || s === 'OUT OF SERVICE' || s === 'TRANSITION TO OUT OF SERVICE' ||
+                    s === 'TRANSITION OUT OF SERVICE' || s === 'TROFS' || s === 'DISABLED') {
+                    return {code: 3, text: 'Out of service'};
+                }
+            
+                if (s === '1' || s === 'DOWN' || s === '8' || s === 'DOWN WHEN GOING OUT OF SERVICE') {
+                    return {code: 2, text: 'Down'};
+                }
+            
+                return {code: 4, text: 'Unknown'};
+            }
+            
+            function mapPoolState(v, counts) {
+                var s = upper(v);
+            
+                if (s === 'UP' || s === '7') {
+                    return {code: 1, text: 'Up'};
+                }
+            
+                if (s === 'DOWN' || s === '1') {
+                    return {code: 2, text: 'Down'};
+                }
+            
+                if (s === 'OUT OF SERVICE' || s === 'DISABLED' || s === 'TROFS' || s === '4' || s === '5') {
+                    return {code: 3, text: 'Out of service'};
+                }
+            
+                if (counts.total > 0) {
+                    if (counts.up > 0) {
+                        return {code: 1, text: 'Up'};
+                    }
+            
+                    if (counts.disabled === counts.total) {
+                        return {code: 3, text: 'Out of service'};
+                    }
+            
+                    return {code: 2, text: 'Down'};
+                }
+            
+                return {code: 4, text: 'Unknown'};
+            }
+            
+            function mapMemberState(state, svrstate) {
+                var s = upper(state),
+                    ss = upper(svrstate);
+            
+                if (s === 'DISABLED' || s === 'OUT OF SERVICE' || s === 'TROFS') {
+                    return {code: 3, text: 'Out of service'};
+                }
+            
+                if (ss === 'UP' || s === 'UP' || s === 'ENABLED') {
+                    return {code: 1, text: 'Up'};
+                }
+            
+                if (ss === 'DOWN' || s === 'DOWN') {
+                    return {code: 2, text: 'Down'};
+                }
+            
+                return {code: 4, text: 'Unknown'};
+            }
+            
+            function mapHaState(enabled, curState) {
+                var s = upper(curState);
+            
+                if (!enabled) {
+                    return {code: 3, text: 'Inactive'};
+                }
+            
+                if (s === '3' || s === 'UP' || s === 'MONITOROK') {
+                    return {code: 1, text: 'Up'};
+                }
+            
+                if (s === '2' || s === 'DOWN' || s === 'PARTIALFAIL' || s === 'COMPLETEFAIL' ||
+                    s === 'PARTIALFAILSSL' || s === 'ROUTEMONITORFAIL' || s === 'MONITORFAIL') {
+                    return {code: 2, text: 'Down'};
+                }
+            
+                if (s === '9' || s === 'DISABLED') {
+                    return {code: 3, text: 'Inactive'};
+                }
+            
+                return {code: 4, text: 'Unknown'};
+            }
+            
+            function normalizeBaseUrl(url) {
+                return trim(url).replace(/\/+$/, '');
+            }
+            
+            var ADC = {
+                api_url: '',
+                username: trim(params.username),
+                password: trim(params.password),
+                proxy: trim(params.proxy),
+                request: function (path, optional) {
+                    var request = new HttpRequest(),
+                        response,
+                        json,
+                        status,
+                        err;
+            
+                    if (ADC.proxy !== '') {
+                        request.setProxy(ADC.proxy);
+                    }
+            
+                    request.addHeader('Accept: application/json');
+                    request.addHeader('Content-Type: application/json');
+                    request.addHeader('X-NITRO-USER: ' + ADC.username);
+                    request.addHeader('X-NITRO-PASS: ' + ADC.password);
+            
+                    response = request.get(ADC.api_url + path);
+                    status = request.getStatus();
+            
+                    if (status !== 200 && status !== 201 && status !== 209) {
+                        err = 'HTTP ' + status + ' for ' + path + ': ' + response;
+                        if (optional === true) {
+                            return {};
+                        }
+                        throw err;
+                    }
+            
+                    try {
+                        json = JSON.parse(response);
+                    }
+                    catch (e) {
+                        if (optional === true) {
+                            return {};
+                        }
+                        throw 'Failed to parse JSON for ' + path + '.';
+                    }
+            
+                    if (typeof json.errorcode !== 'undefined' && json.errorcode !== 0) {
+                        err = 'NITRO error ' + json.errorcode + ' for ' + path + ': ' + str(json.message);
+                        if (optional === true) {
+                            return {};
+                        }
+                        throw err;
+                    }
+            
+                    return json;
+                }
+            };
+            
+            function sortByName(a, b) {
+                return str(a.name || a.id).localeCompare(str(b.name || b.id));
+            }
+            
+            try {
+                var apiUrl = trim(params.api_url),
+                    scheme = trim(params.scheme) || 'https',
+                    host = trim(params.host),
+                    port = trim(params.port) || '443',
+                    systemStats,
+                    nsStats,
+                    haStats,
+                    lbvserverStats,
+                    servicegroupStats,
+                    memberBindings,
+                    lbvserverSgBindings,
+                    systemObj,
+                    nsObj,
+                    haObj,
+                    lbvservers,
+                    servicegroups,
+                    members,
+                    vipToSg = {},
+                    sgToVip = {},
+                    sgMemberCounts = {},
+                    sgMemberLists = {},
+                    i,
+                    item,
+                    name,
+                    sgName,
+                    vipName,
+                    memberId,
+                    state,
+                    result,
+                    appliance,
+                    vserversOut = [],
+                    servicegroupsOut = [],
+                    membersOut = [],
+                    enabled,
+                    haState,
+                    vserverMemberSet,
+                    backendMembers,
+                    list;
+            
+                if (apiUrl === '') {
+                    if (host === '') {
+                        throw 'API URL is empty and host interface is not defined.';
+                    }
+                    apiUrl = scheme + '://' + host + ':' + port;
+                }
+            
+                ADC.api_url = normalizeBaseUrl(apiUrl);
+            
+                if (ADC.username === '' || ADC.password === '') {
+                    throw 'API username or password macro is empty.';
+                }
+            
+                systemStats = ADC.request('/nitro/v1/stat/system', false);
+                nsStats = ADC.request('/nitro/v1/stat/ns', false);
+                haStats = ADC.request('/nitro/v1/stat/hanode', true);
+                lbvserverStats = ADC.request('/nitro/v1/stat/lbvserver', true);
+                servicegroupStats = ADC.request('/nitro/v1/stat/servicegroup', true);
+                memberBindings = ADC.request('/nitro/v1/config/servicegroup_servicegroupmember_binding?bulkbindings=yes', true);
+                lbvserverSgBindings = ADC.request('/nitro/v1/config/lbvserver_servicegroup_binding?bulkbindings=yes', true);
+            
+                systemObj = getFirst(systemStats, 'system');
+                nsObj = getFirst(nsStats, 'ns');
+                haObj = getFirst(haStats, 'hanode');
+                lbvservers = getArray(lbvserverStats, 'lbvserver');
+                servicegroups = getArray(servicegroupStats, 'servicegroup');
+                members = getArray(memberBindings, 'servicegroup_servicegroupmember_binding');
+            
+                list = getArray(lbvserverSgBindings, 'lbvserver_servicegroup_binding');
+                for (i = 0; i < list.length; i++) {
+                    item = object(list[i]);
+                    vipName = trim(item.name);
+                    sgName = trim(item.servicegroupname);
+            
+                    if (vipName === '' || sgName === '') {
+                        continue;
+                    }
+            
+                    if (typeof vipToSg[vipName] === 'undefined') {
+                        vipToSg[vipName] = [];
+                    }
+                    if (typeof sgToVip[sgName] === 'undefined') {
+                        sgToVip[sgName] = [];
+                    }
+            
+                    vipToSg[vipName].push(sgName);
+                    sgToVip[sgName].push(vipName);
+                }
+            
+                for (i = 0; i < members.length; i++) {
+                    item = object(members[i]);
+                    sgName = trim(item.servicegroupname);
+            
+                    if (sgName === '') {
+                        continue;
+                    }
+            
+                    state = mapMemberState(item.state, item.svrstate);
+            
+                    if (typeof sgMemberCounts[sgName] === 'undefined') {
+                        sgMemberCounts[sgName] = {total: 0, up: 0, down: 0, disabled: 0};
+                    }
+                    if (typeof sgMemberLists[sgName] === 'undefined') {
+                        sgMemberLists[sgName] = [];
+                    }
+            
+                    memberId = sgName + ':' + (trim(item.servername) !== '' ? trim(item.servername) : trim(item.ip)) + ':' + trim(item.port);
+            
+                    sgMemberCounts[sgName].total += 1;
+                    if (state.code === 1) {
+                        sgMemberCounts[sgName].up += 1;
+                    }
+                    else if (state.code === 2) {
+                        sgMemberCounts[sgName].down += 1;
+                    }
+                    else if (state.code === 3) {
+                        sgMemberCounts[sgName].disabled += 1;
+                    }
+            
+                    sgMemberLists[sgName].push(memberId);
+            
+                    membersOut.push({
+                        id: memberId,
+                        servicegroup: sgName,
+                        ip: trim(item.ip),
+                        servername: trim(item.servername),
+                        port: toNum(item.port, 0),
+                        state_code: state.code,
+                        state_text: state.text,
+                        state_raw: trim(item.state),
+                        svrstate_raw: trim(item.svrstate),
+                        vservers: uniqueSorted(array(sgToVip[sgName] || [])).join(', ')
+                    });
+                }
+            
+                enabled = (upper(haObj.hacurstatus) === '1' || upper(haObj.hacurstatus) === 'YES' ||
+                           upper(haObj.hacurstatus) === 'ACTIVE' || upper(haObj.hacurstatus) === 'ENABLED') ? 1 : 0;
+                haState = mapHaState(enabled, haObj.hacurstate);
+            
+                appliance = {
+                    cpu_util: toNum(systemObj.cpuusagepcnt || systemObj.rescpuusagepcnt || nsObj.rescpuusage, 0),
+                    cpu_packet_util: toNum(systemObj.pktcpuusagepcnt || nsObj.pktcpuusagepcnt, 0),
+                    cpu_mgmt_util: toNum(systemObj.mgmtcpuusagepcnt || nsObj.mgmtcpuusagepcnt, 0),
+                    memory_util: toNum(systemObj.memusagepcnt, 0),
+                    memory_used_b: Math.round(toNum(systemObj.memuseinmb, 0) * 1048576),
+                    memory_total_b: Math.round(toNum(systemObj.memsizemb, 0) * 1048576),
+                    disk0_util: toNum(systemObj.disk0perusage, 0),
+                    disk1_util: toNum(systemObj.disk1perusage, 0),
+                    uptime: toNum(systemObj.timesincestart, 0),
+                    cpus: toNum(systemObj.numcpus, 0),
+                    ha_enabled: enabled,
+                    ha_state_code: haState.code,
+                    ha_state_text: haState.text,
+                    ha_state_raw: trim(haObj.hacurstate),
+                    rx_bps: Math.round(toNum(nsObj.rxmbitsrate, 0) * 1000000),
+                    tx_bps: Math.round(toNum(nsObj.txmbitsrate, 0) * 1000000),
+                    client_conn: toNum(nsObj.tcpcurclientconn, 0),
+                    server_conn: toNum(nsObj.tcpcurserverconn, 0),
+                    http_req_rate: toNum(nsObj.httprequestsrate, 0),
+                    http_req_in_bps: Math.round(toNum(nsObj.httprxrequestbytesrate, 0) * 8),
+                    http_resp_out_bps: Math.round(toNum(nsObj.httprxresponsebytesrate, 0) * 8),
+                    ssl_tx_rate: toNum(nsObj.ssltransactionsrate, 0)
+                };
+            
+                for (i = 0; i < lbvservers.length; i++) {
+                    item = object(lbvservers[i]);
+                    name = trim(item.name);
+                    state = mapVipState(item.state);
+                    vserverMemberSet = {};
+                    backendMembers = {total: 0, up: 0, down: 0, disabled: 0};
+            
+                    list = uniqueSorted(array(vipToSg[name] || []));
+                    for (var j = 0; j < list.length; j++) {
+                        sgName = list[j];
+                        backendMembers.total += toNum(object(sgMemberCounts[sgName]).total, 0);
+                        backendMembers.up += toNum(object(sgMemberCounts[sgName]).up, 0);
+                        backendMembers.down += toNum(object(sgMemberCounts[sgName]).down, 0);
+                        backendMembers.disabled += toNum(object(sgMemberCounts[sgName]).disabled, 0);
+            
+                        if (typeof sgMemberLists[sgName] !== 'undefined') {
+                            for (var k = 0; k < sgMemberLists[sgName].length; k++) {
+                                vserverMemberSet[sgMemberLists[sgName][k]] = 1;
+                            }
+                        }
+                    }
+            
+                    vserversOut.push({
+                        name: name,
+                        ip: trim(item.primaryipaddress),
+                        port: toNum(item.primaryport, 0),
+                        type: trim(item.type),
+                        state_code: state.code,
+                        state_text: state.text,
+                        state_raw: trim(item.state),
+                        health: toNum(item.vslbhealth, 0),
+                        active_services: toNum(item.actsvcs, 0),
+                        inactive_services: toNum(item.inactsvcs, 0),
+                        request_rate: toNum(item.requestsrate, 0),
+                        response_rate: toNum(item.responsesrate, 0),
+                        request_bps: Math.round(toNum(item.requestbytesrate, 0) * 8),
+                        response_bps: Math.round(toNum(item.responsebytesrate, 0) * 8),
+                        client_conn: toNum(item.curclntconnections, 0),
+                        server_conn: toNum(item.cursrvrconnections, 0),
+                        established_conn: toNum(item.establishedconn, 0),
+                        servicegroups: list.join(', '),
+                        backend_members_total: backendMembers.total,
+                        backend_members_up: backendMembers.up,
+                        backend_members_down: backendMembers.down,
+                        backend_members_disabled: backendMembers.disabled
+                    });
+                }
+            
+                for (i = 0; i < servicegroups.length; i++) {
+                    item = object(servicegroups[i]);
+                    name = trim(item.servicegroupname);
+                    result = object(sgMemberCounts[name]);
+                    state = mapPoolState(item.state, {
+                        total: toNum(result.total, 0),
+                        up: toNum(result.up, 0),
+                        down: toNum(result.down, 0),
+                        disabled: toNum(result.disabled, 0)
+                    });
+            
+                    servicegroupsOut.push({
+                        name: name,
+                        type: trim(item.servicetype),
+                        state_code: state.code,
+                        state_text: state.text,
+                        state_raw: trim(item.state),
+                        vservers: uniqueSorted(array(sgToVip[name] || [])).join(', '),
+                        members_total: toNum(result.total, 0),
+                        members_up: toNum(result.up, 0),
+                        members_down: toNum(result.down, 0),
+                        members_disabled: toNum(result.disabled, 0)
+                    });
+                }
+            
+                vserversOut.sort(sortByName);
+                servicegroupsOut.sort(sortByName);
+                membersOut.sort(sortByName);
+            
+                return JSON.stringify({
+                    error: '',
+                    meta: {
+                        api_url: ADC.api_url
+                    },
+                    appliance: appliance,
+                    vservers: vserversOut,
+                    servicegroups: servicegroupsOut,
+                    members: membersOut
+                });
+            }
+            catch (e) {
+                return JSON.stringify({
+                    error: str(e)
+                });
+            }
+          description: |
+            Collects appliance, VIP, pool and member data from the Citrix ADC NITRO API.
+            
+            Design notes:
+            - one master item returns a single JSON document
+            - dependent items and LLD consume that JSON
+            - API/auth/network failures become one error signal instead of hundreds of unsupported items
+          timeout: '{$CITRIX.ADC.DATA.TIMEOUT}'
+          parameters:
+            - name: api_url
+              value: '{$CITRIX.ADC.API.URL}'
+            - name: host
+              value: '{HOST.CONN}'
+            - name: password
+              value: '{$CITRIX.ADC.API.PASSWORD}'
+            - name: port
+              value: '{$CITRIX.ADC.API.PORT}'
+            - name: proxy
+              value: '{$CITRIX.ADC.HTTP.PROXY}'
+            - name: scheme
+              value: '{$CITRIX.ADC.API.SCHEME}'
+            - name: username
+              value: '{$CITRIX.ADC.API.USER}'
+          tags:
+            - tag: component
+              value: api
+            - tag: component
+              value: raw
+          triggers:
+            - uuid: 5699d60845444beda1a1d605a5ee44b9
+              expression: 'nodata(/Citrix ADC by NITRO API/citrix.adc.get,{$CITRIX.ADC.NODATA})=1'
+              name: 'Citrix ADC: No API data collected'
+              event_name: 'Citrix ADC: No API data collected for {$CITRIX.ADC.NODATA}'
+              priority: HIGH
+              description: 'The master NITRO collection item has not produced data.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 444b2959f5334e3a81499037d0f7f1c8
+          name: 'Citrix ADC: API collection error'
+          type: DEPENDENT
+          key: citrix.adc.get.error
+          delay: '0'
+          history: 7d
+          value_type: TEXT
+          trends: '0'
+          description: 'Error returned by the NITRO master item.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: CUSTOM_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: citrix.adc.get
+          tags:
+            - tag: component
+              value: error
+          triggers:
+            - uuid: 2b25413e8932468987662a57f6b25ec7
+              expression: 'length(last(/Citrix ADC by NITRO API/citrix.adc.get.error))>0'
+              name: 'Citrix ADC: API collection has errors'
+              priority: HIGH
+              description: 'The master NITRO item returned an error.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 42d98028e6d945fe985e310d95eb00ea
+          name: 'HA enabled'
+          type: DEPENDENT
+          key: citrix.adc.ha.enabled
+          delay: '0'
+          history: 7d
+          trends: '0'
+          valuemap:
+            name: 'Boolean yes/no'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ha_enabled
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: ha
+        - uuid: 5caa48104e2f463ba0ccb1246d43dbf8
+          name: 'HA state'
+          type: DEPENDENT
+          key: citrix.adc.ha.state
+          delay: '0'
+          history: 7d
+          trends: '0'
+          valuemap:
+            name: 'Citrix ADC HA state'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ha_state_code
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: ha
+        - uuid: 8ec992f5ecff44f5994e61579d5cb7be
+          name: 'HTTP requests rate'
+          type: DEPENDENT
+          key: citrix.adc.http.requests.rate
+          delay: '0'
+          units: r/s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.http_req_rate
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: http
+        - uuid: 4a89608e893e4fa9997edb8d78f9619f
+          name: 'Citrix ADC: Backend members raw data'
+          type: DEPENDENT
+          key: citrix.adc.members.raw
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.members
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: citrix.adc.get
+          tags:
+            - tag: component
+              value: raw
+        - uuid: b87acc1ad7eb4d5ead1d0e9896554216
+          name: 'Current client connections'
+          type: DEPENDENT
+          key: citrix.adc.net.client.conn
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.client_conn
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: connections
+        - uuid: 3ee6918217f44c3f8c514e0fdbd50f9a
+          name: 'Aggregate RX throughput'
+          type: DEPENDENT
+          key: citrix.adc.net.rx
+          delay: '0'
+          units: bps
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.rx_bps
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: network
+        - uuid: 89f4fc7f6796401c9c0f05880992ea79
+          name: 'Current server connections'
+          type: DEPENDENT
+          key: citrix.adc.net.server.conn
+          delay: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.server_conn
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: connections
+        - uuid: b855c80bed8240d4bab95c4f90411f67
+          name: 'Aggregate TX throughput'
+          type: DEPENDENT
+          key: citrix.adc.net.tx
+          delay: '0'
+          units: bps
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.tx_bps
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: network
+        - uuid: 3d59a9efa1ab4fd4b43c629d8dcab0cb
+          name: 'Citrix ADC: Service groups raw data'
+          type: DEPENDENT
+          key: citrix.adc.servicegroups.raw
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.servicegroups
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: citrix.adc.get
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 958a05f97259471a8b30c0065860e948
+          name: 'SSL transactions rate'
+          type: DEPENDENT
+          key: citrix.adc.ssl.transactions.rate
+          delay: '0'
+          units: r/s
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ssl_tx_rate
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: ssl
+        - uuid: 1f4c7957c0344f86b948bf097610d452
+          name: 'System CPU utilization'
+          type: DEPENDENT
+          key: citrix.adc.system.cpu.util
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Overall Citrix ADC CPU utilization from NITRO system statistics.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cpu_util
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: cpu
+          triggers:
+            - uuid: 7d4c431e1fe74666bf242a2cbbbba600
+              expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)>={$CITRIX.ADC.SYSTEM.CPU.CRIT}'
+              recovery_mode: RECOVERY_EXPRESSION
+              recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)<{$CITRIX.ADC.SYSTEM.CPU.CRIT}-5'
+              name: 'Citrix ADC: CPU utilization is critically high'
+              event_name: 'Citrix ADC: CPU utilization is critically high (>{$CITRIX.ADC.SYSTEM.CPU.CRIT}% for 15m)'
+              opdata: 'Current utilization: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: performance
+            - uuid: c502b8ca0d8f403aa00279e8c8e13547
+              expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)>={$CITRIX.ADC.SYSTEM.CPU.WARN}'
+              recovery_mode: RECOVERY_EXPRESSION
+              recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)<{$CITRIX.ADC.SYSTEM.CPU.WARN}-5'
+              name: 'Citrix ADC: CPU utilization is high'
+              event_name: 'Citrix ADC: CPU utilization is high (>{$CITRIX.ADC.SYSTEM.CPU.WARN}% for 15m)'
+              opdata: 'Current utilization: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              dependencies:
+                - name: 'Citrix ADC: CPU utilization is critically high'
+                  expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)>={$CITRIX.ADC.SYSTEM.CPU.CRIT}'
+                  recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.cpu.util,15m)<{$CITRIX.ADC.SYSTEM.CPU.CRIT}-5'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: e6cc1da254c24d299980405831d22d91
+          name: 'Number of CPUs'
+          type: DEPENDENT
+          key: citrix.adc.system.cpus
+          delay: '0'
+          history: 7d
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.cpus
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: cpu
+        - uuid: 24fbce8ec49c47009dfc431cec3b2d77
+          name: 'Disk 0 utilization'
+          type: DEPENDENT
+          key: citrix.adc.system.disk0.util
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.disk0_util
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 15m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: storage
+        - uuid: 4110a5424f104d8eb9600d556287a8ea
+          name: 'Disk 1 utilization'
+          type: DEPENDENT
+          key: citrix.adc.system.disk1.util
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.disk1_util
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 15m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: storage
+        - uuid: e10aafbce3bc4eecb5cd76ccba34d709
+          name: 'System memory total'
+          type: DEPENDENT
+          key: citrix.adc.system.memory.total
+          delay: '0'
+          history: 7d
+          trends: '0'
+          units: B
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.memory_total_b
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: memory
+        - uuid: 3fb67d7dafb14ae6af4921eaad3d2548
+          name: 'System memory used'
+          type: DEPENDENT
+          key: citrix.adc.system.memory.used
+          delay: '0'
+          units: B
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.memory_used_b
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: memory
+        - uuid: e193473d83184c698ffb36ec1bd192c0
+          name: 'System memory utilization'
+          type: DEPENDENT
+          key: citrix.adc.system.memory.util
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.memory_util
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 5m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: memory
+          triggers:
+            - uuid: a24c9d91b33343eda3ffb692ade0409d
+              expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)>={$CITRIX.ADC.SYSTEM.MEM.CRIT}'
+              recovery_mode: RECOVERY_EXPRESSION
+              recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)<{$CITRIX.ADC.SYSTEM.MEM.CRIT}-5'
+              name: 'Citrix ADC: Memory utilization is critically high'
+              event_name: 'Citrix ADC: Memory utilization is critically high (>{$CITRIX.ADC.SYSTEM.MEM.CRIT}% for 15m)'
+              opdata: 'Current utilization: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: 7e1feaef47594305b5384a716176a3e4
+              expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)>={$CITRIX.ADC.SYSTEM.MEM.WARN}'
+              recovery_mode: RECOVERY_EXPRESSION
+              recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)<{$CITRIX.ADC.SYSTEM.MEM.WARN}-5'
+              name: 'Citrix ADC: Memory utilization is high'
+              event_name: 'Citrix ADC: Memory utilization is high (>{$CITRIX.ADC.SYSTEM.MEM.WARN}% for 15m)'
+              opdata: 'Current utilization: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              dependencies:
+                - name: 'Citrix ADC: Memory utilization is critically high'
+                  expression: 'min(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)>={$CITRIX.ADC.SYSTEM.MEM.CRIT}'
+                  recovery_expression: 'max(/Citrix ADC by NITRO API/citrix.adc.system.memory.util,15m)<{$CITRIX.ADC.SYSTEM.MEM.CRIT}-5'
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: 8019aa985f7b40d98626b579b2a6b8fb
+          name: 'System uptime'
+          type: DEPENDENT
+          key: citrix.adc.system.uptime
+          delay: '0'
+          history: 7d
+          trends: '0'
+          units: uptime
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.uptime
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 10m
+          master_item:
+            key: citrix.adc.appliance.raw
+          tags:
+            - tag: component
+              value: system
+        - uuid: 607c2c1baed046c8b48431d442d9b48c
+          name: 'Citrix ADC: vServers raw data'
+          type: DEPENDENT
+          key: citrix.adc.vservers.raw
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.vservers
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: citrix.adc.get
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 810b7e1affeb4757b99ac395ba8c2032
+          name: 'Discover backend members'
+          type: DEPENDENT
+          key: citrix.adc.member.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#SERVICEGROUP}'
+                value: '{$CITRIX.ADC.MEMBER.SERVICEGROUP.MATCHES}'
+                formulaid: A
+              - macro: '{#SERVICEGROUP}'
+                value: '{$CITRIX.ADC.MEMBER.SERVICEGROUP.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          lifetime: 1d
+          description: 'Discovers backend members from service group member bindings. Member-level alerts are disabled by default.'
+          item_prototypes:
+            - uuid: 67eb33c52fff4aeca4c68e435b4c988e
+              name: 'Member [{#SERVICEGROUP}] {#ID}: IP address'
+              type: DEPENDENT
+              key: 'citrix.adc.member.ip[{#ID}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ip
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+            - uuid: 03bf392dc4bb4941a7d398ffe23056c2
+              name: 'Member [{#SERVICEGROUP}] {#ID}: Port'
+              type: DEPENDENT
+              key: 'citrix.adc.member.port[{#ID}]'
+              delay: '0'
+              history: 7d
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.port
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+            - uuid: cdb6807e69a2428493c84918184589df
+              name: 'Member [{#SERVICEGROUP}] {#ID}: Raw data'
+              type: DEPENDENT
+              key: 'citrix.adc.member.raw[{#ID}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.id==''{#ID}'')].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: citrix.adc.members.raw
+              tags:
+                - tag: component
+                  value: raw
+                - tag: member
+                  value: '{#ID}'
+                - tag: scope
+                  value: member
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+            - uuid: 9c5342b754c84eea8f63dfab0a17f4ef
+              name: 'Member [{#SERVICEGROUP}] {#ID}: Server name'
+              type: DEPENDENT
+              key: 'citrix.adc.member.servername[{#ID}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.servername
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+            - uuid: 4c115742e0f24658bcfbf984e8e24391
+              name: 'Member [{#SERVICEGROUP}] {#ID}: State text'
+              type: DEPENDENT
+              key: 'citrix.adc.member.state.text[{#ID}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_text
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+            - uuid: fc50cf00383b4ac19d41003608a99a39
+              name: 'Member [{#SERVICEGROUP}] {#ID}: State'
+              type: DEPENDENT
+              key: 'citrix.adc.member.state[{#ID}]'
+              delay: '0'
+              history: 7d
+              trends: '0'
+              valuemap:
+                name: 'Citrix ADC operational state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_code
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+              trigger_prototypes:
+                - uuid: 21aa1a08c560409696a22d0d22730076
+                  expression: '{$CITRIX.ADC.MEMBER.ALERT.GROUP:"{#SERVICEGROUP}"}=1 and min(/Citrix ADC by NITRO API/citrix.adc.member.state[{#ID}],{$CITRIX.ADC.MEMBER.DOWN.WINDOW})=2 and max(/Citrix ADC by NITRO API/citrix.adc.member.state[{#ID}],{$CITRIX.ADC.MEMBER.DOWN.WINDOW})=2'
+                  recovery_mode: RECOVERY_EXPRESSION
+                  recovery_expression: 'last(/Citrix ADC by NITRO API/citrix.adc.member.state[{#ID}])<>2 or {$CITRIX.ADC.MEMBER.ALERT.GROUP:"{#SERVICEGROUP}"}=0'
+                  name: 'Member [{#SERVICEGROUP}] {#ID} is down'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Disabled by default. Enable only for pools where per-member alerts are operationally useful.'
+                  tags:
+                    - tag: component
+                      value: member
+                    - tag: scope
+                      value: availability
+            - uuid: 6b03d662953c4c82a1137e7a08ff17cf
+              name: 'Member [{#SERVICEGROUP}] {#ID}: Bound VIPs'
+              type: DEPENDENT
+              key: 'citrix.adc.member.vservers[{#ID}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.vservers
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'citrix.adc.member.raw[{#ID}]'
+              tags:
+                - tag: component
+                  value: member
+                - tag: member
+                  value: '{#ID}'
+                - tag: servicegroup
+                  value: '{#SERVICEGROUP}'
+          master_item:
+            key: citrix.adc.members.raw
+          lld_macro_paths:
+            - lld_macro: '{#ID}'
+              path: $.id
+            - lld_macro: '{#IP}'
+              path: $.ip
+            - lld_macro: '{#PORT}'
+              path: $.port
+            - lld_macro: '{#SERVERNAME}'
+              path: $.servername
+            - lld_macro: '{#SERVICEGROUP}'
+              path: $.servicegroup
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+        - uuid: bbd75abc7fa1435b95208e2929d59bee
+          name: 'Discover service groups'
+          type: DEPENDENT
+          key: citrix.adc.servicegroup.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$CITRIX.ADC.SERVICEGROUP.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$CITRIX.ADC.SERVICEGROUP.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          description: 'Discovers service groups (backend pools) from NITRO.'
+          item_prototypes:
+            - uuid: 24719af13e3e42bc8f0a207c0492e012
+              name: 'Pool [{#NAME}]: Members out of service'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.members.disabled[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.members_disabled
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 47f73c4a4b964c60a4125ffb068bfeb1
+              name: 'Pool [{#NAME}]: Members down'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.members.down[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.members_down
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 59ffcdad6f0e426c88cbfe05e3061b65
+              name: 'Pool [{#NAME}]: Members total'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.members.total[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.members_total
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 738022fbcb074543aaad9482f39141cc
+              name: 'Pool [{#NAME}]: Members up'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.members.up[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.members_up
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: cf8814bf9797471cbfa46491b129dca7
+              name: 'Pool [{#NAME}]: Protocol'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.protocol[{#NAME}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.type
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 6b894410c8b14c4fb32898501da727c3
+              name: 'Pool [{#NAME}]: Raw data'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.name==''{#NAME}'')].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: citrix.adc.servicegroups.raw
+              tags:
+                - tag: component
+                  value: raw
+                - tag: scope
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 75912382e9a449e3aa2c8ca95bc0b391
+              name: 'Pool [{#NAME}]: State text'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.state.text[{#NAME}]'
+              delay: '0'
+              history: 14d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_text
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+            - uuid: 9212058d0dc943448bd702cea1e6f711
+              name: 'Pool [{#NAME}]: State'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.state[{#NAME}]'
+              delay: '0'
+              history: 14d
+              trends: '0'
+              valuemap:
+                name: 'Citrix ADC operational state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_code
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: a9762d1ee5c443f5803702aad57fc65b
+                  expression: '{$CITRIX.ADC.SERVICEGROUP.ALERT:"{#NAME}"}=1 and min(/Citrix ADC by NITRO API/citrix.adc.servicegroup.state[{#NAME}],{$CITRIX.ADC.SERVICEGROUP.DOWN.WINDOW})=2 and max(/Citrix ADC by NITRO API/citrix.adc.servicegroup.state[{#NAME}],{$CITRIX.ADC.SERVICEGROUP.DOWN.WINDOW})=2'
+                  recovery_mode: RECOVERY_EXPRESSION
+                  recovery_expression: 'last(/Citrix ADC by NITRO API/citrix.adc.servicegroup.state[{#NAME}])<>2 or {$CITRIX.ADC.SERVICEGROUP.ALERT:"{#NAME}"}=0'
+                  name: 'Pool [{#NAME}] is down'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Alerts when the normalized service group state is Down. Out-of-service states are ignored by default.'
+                  tags:
+                    - tag: component
+                      value: servicegroup
+                    - tag: scope
+                      value: availability
+            - uuid: 64e34f4325804212aea421c210a30b35
+              name: 'Pool [{#NAME}]: Bound VIPs'
+              type: DEPENDENT
+              key: 'citrix.adc.servicegroup.vservers[{#NAME}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.vservers
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'citrix.adc.servicegroup.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: servicegroup
+                - tag: servicegroup
+                  value: '{#NAME}'
+          graph_prototypes:
+            - uuid: 3a091c985050475690fab8c2ea980fb0
+              name: 'Pool [{#NAME}]: Backend member state'
+              graph_items:
+                - color: 1A7C11
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.servicegroup.members.up[{#NAME}]'
+                - sortorder: '1'
+                  color: F63100
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.servicegroup.members.down[{#NAME}]'
+                - sortorder: '2'
+                  color: '777777'
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.servicegroup.members.disabled[{#NAME}]'
+                - sortorder: '3'
+                  color: 2774A4
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.servicegroup.members.total[{#NAME}]'
+          master_item:
+            key: citrix.adc.servicegroups.raw
+          lld_macro_paths:
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#TYPE}'
+              path: $.type
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+        - uuid: 8ac1bf83baf34db7871fd9188d575202
+          name: 'Discover load balancing vServers'
+          type: DEPENDENT
+          key: citrix.adc.vserver.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#NAME}'
+                value: '{$CITRIX.ADC.VSERVER.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#NAME}'
+                value: '{$CITRIX.ADC.VSERVER.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          description: 'Discovers load-balancing VIPs from the NITRO lbvserver statistics payload.'
+          item_prototypes:
+            - uuid: 81761c497542405782699e7342aab74b
+              name: 'VIP [{#NAME}]: Client connections'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.connections.client[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.client_conn
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 8325a15583844f9ab24bcfc4c345228a
+              name: 'VIP [{#NAME}]: Established connections'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.connections.established[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.established_conn
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 5ddeaadbfa1b45b3b6c9242119bae075
+              name: 'VIP [{#NAME}]: Server connections'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.connections.server[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.server_conn
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 8dc7f58ba20b464c802bf5d38492895f
+              name: 'VIP [{#NAME}]: Health'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.health[{#NAME}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.health
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 2140fb358aaf4b46812c01fc084e9070
+              name: 'VIP [{#NAME}]: IP address'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.ip[{#NAME}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ip
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 722cf4c122cd4d559948c0230c2dec2f
+              name: 'VIP [{#NAME}]: Backend members out of service'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.members.disabled[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.backend_members_disabled
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: b7a475f44ac547c9987fb9551338a2f7
+              name: 'VIP [{#NAME}]: Backend members down'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.members.down[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.backend_members_down
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 21699a83b99d40e99a2d6eccc869c305
+              name: 'VIP [{#NAME}]: Backend members total'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.members.total[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.backend_members_total
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 68cd844d6dea4e34b8ed4c0cb0b0a63c
+              name: 'VIP [{#NAME}]: Backend members up'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.members.up[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.backend_members_up
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 95dfaa6e0e9944fcbcd86815ed729e31
+              name: 'VIP [{#NAME}]: Port'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.port[{#NAME}]'
+              delay: '0'
+              history: 7d
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.port
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: c0c2780083414bebaa7d723d6890c7d1
+              name: 'VIP [{#NAME}]: Protocol'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.protocol[{#NAME}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.type
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 9205d2225cb642088e4bbebda69e8530
+              name: 'VIP [{#NAME}]: Raw data'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.raw[{#NAME}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$[?(@.name==''{#NAME}'')].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: citrix.adc.vservers.raw
+              tags:
+                - tag: component
+                  value: raw
+                - tag: scope
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 32b689eb69a74c72801f87388615ed1d
+              name: 'VIP [{#NAME}]: Request throughput'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.request.bps[{#NAME}]'
+              delay: '0'
+              units: bps
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.request_bps
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 8bc283869005477bb2a74714d03b2a90
+              name: 'VIP [{#NAME}]: Request rate'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.requests.rate[{#NAME}]'
+              delay: '0'
+              value_type: FLOAT
+              units: r/s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.request_rate
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 22d3217c20de4f22b4e903ef07fc5f18
+              name: 'VIP [{#NAME}]: Response throughput'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.response.bps[{#NAME}]'
+              delay: '0'
+              units: bps
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.response_bps
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: c266bdb30b394fe28f1ffc302549b41a
+              name: 'VIP [{#NAME}]: Response rate'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.responses.rate[{#NAME}]'
+              delay: '0'
+              value_type: FLOAT
+              units: r/s
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.response_rate
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 1c8852c5daa54ad4ab291880532e8c78
+              name: 'VIP [{#NAME}]: Bound service groups'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.servicegroups[{#NAME}]'
+              delay: '0'
+              history: 7d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.servicegroups
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 6d45cdcbe4bf41ecbc0aa7eb8eec94d6
+              name: 'VIP [{#NAME}]: Active services'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.services.active[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.active_services
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: b52f342e033f464eab43df58b3dc52df
+              name: 'VIP [{#NAME}]: Inactive services'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.services.inactive[{#NAME}]'
+              delay: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.inactive_services
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: a94f16be150344e592f5bfe7c95afc70
+              name: 'VIP [{#NAME}]: State text'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.state.text[{#NAME}]'
+              delay: '0'
+              history: 14d
+              value_type: CHAR
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_text
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+            - uuid: 7a510e41a255427fa5e3a356e4e4d5f1
+              name: 'VIP [{#NAME}]: State'
+              type: DEPENDENT
+              key: 'citrix.adc.vserver.state[{#NAME}]'
+              delay: '0'
+              history: 14d
+              trends: '0'
+              description: 'Normalized VIP state. Down alerts fire only when the state is Down, not when it is Out of service.'
+              valuemap:
+                name: 'Citrix ADC operational state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_code
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 5m
+              master_item:
+                key: 'citrix.adc.vserver.raw[{#NAME}]'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: vserver
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: d30f669be6df4c2796f1dd881e01aef8
+                  expression: '{$CITRIX.ADC.VSERVER.ALERT:"{#NAME}"}=1 and min(/Citrix ADC by NITRO API/citrix.adc.vserver.state[{#NAME}],{$CITRIX.ADC.VSERVER.DOWN.WINDOW})=2 and max(/Citrix ADC by NITRO API/citrix.adc.vserver.state[{#NAME}],{$CITRIX.ADC.VSERVER.DOWN.WINDOW})=2'
+                  recovery_mode: RECOVERY_EXPRESSION
+                  recovery_expression: 'last(/Citrix ADC by NITRO API/citrix.adc.vserver.state[{#NAME}])<>2 or {$CITRIX.ADC.VSERVER.ALERT:"{#NAME}"}=0'
+                  name: 'VIP [{#NAME}] is down'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'Alerts only when the normalized VIP state is Down. Out-of-service states are ignored to reduce false positives.'
+                  tags:
+                    - tag: component
+                      value: vserver
+                    - tag: scope
+                      value: availability
+          trigger_prototypes:
+            - uuid: 544dfd370dc242738ed8cbf17a9e7bfd
+              expression: '{$CITRIX.ADC.VSERVER.DEGRADED.ALERT:"{#NAME}"}=1 and last(/Citrix ADC by NITRO API/citrix.adc.vserver.state[{#NAME}])=1 and min(/Citrix ADC by NITRO API/citrix.adc.vserver.health[{#NAME}],{$CITRIX.ADC.VSERVER.HEALTH.WINDOW})<{$CITRIX.ADC.VSERVER.HEALTH.MIN:"{#NAME}"} and max(/Citrix ADC by NITRO API/citrix.adc.vserver.members.total[{#NAME}],{$CITRIX.ADC.VSERVER.HEALTH.WINDOW})>0'
+              recovery_mode: RECOVERY_EXPRESSION
+              recovery_expression: 'last(/Citrix ADC by NITRO API/citrix.adc.vserver.health[{#NAME}])>={$CITRIX.ADC.VSERVER.HEALTH.MIN:"{#NAME}"} or {$CITRIX.ADC.VSERVER.DEGRADED.ALERT:"{#NAME}"}=0 or last(/Citrix ADC by NITRO API/citrix.adc.vserver.state[{#NAME}])<>1'
+              name: 'VIP [{#NAME}] backend health is degraded'
+              opdata: 'Current health: {ITEM.LASTVALUE1}%'
+              priority: WARNING
+              description: 'Disabled by default. Enable with context macro for VIPs where partial member loss must alert.'
+              tags:
+                - tag: component
+                  value: vserver
+                - tag: scope
+                  value: availability
+          graph_prototypes:
+            - uuid: 43b4f8aecd8441ba91eba7cf7db6cef7
+              name: 'VIP [{#NAME}]: Backend member state'
+              graph_items:
+                - color: 1A7C11
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.members.up[{#NAME}]'
+                - sortorder: '1'
+                  color: F63100
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.members.down[{#NAME}]'
+                - sortorder: '2'
+                  color: '777777'
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.members.disabled[{#NAME}]'
+                - sortorder: '3'
+                  color: 2774A4
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.members.total[{#NAME}]'
+            - uuid: b572432427c54325adfb554a3bafefb1
+              name: 'VIP [{#NAME}]: Connections'
+              graph_items:
+                - color: 1A7C11
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.connections.client[{#NAME}]'
+                - sortorder: '1'
+                  color: 2774A4
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.connections.server[{#NAME}]'
+                - sortorder: '2'
+                  color: F7941D
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.connections.established[{#NAME}]'
+            - uuid: 10f7e27d4aa24c189e137c985dd1801e
+              name: 'VIP [{#NAME}]: Requests and responses'
+              graph_items:
+                - color: 1A7C11
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.requests.rate[{#NAME}]'
+                - sortorder: '1'
+                  color: F63100
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.responses.rate[{#NAME}]'
+            - uuid: 852286fc5fe9496cae6f8ab778b2f877
+              name: 'VIP [{#NAME}]: Traffic'
+              graph_items:
+                - color: 1A7C11
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.request.bps[{#NAME}]'
+                - sortorder: '1'
+                  color: 2774A4
+                  item:
+                    host: 'Citrix ADC by NITRO API'
+                    key: 'citrix.adc.vserver.response.bps[{#NAME}]'
+          master_item:
+            key: citrix.adc.vservers.raw
+          lld_macro_paths:
+            - lld_macro: '{#IP}'
+              path: $.ip
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#PORT}'
+              path: $.port
+            - lld_macro: '{#TYPE}'
+              path: $.type
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+      tags:
+        - tag: product
+          value: adc
+        - tag: vendor
+          value: citrix
+      macros:
+        - macro: '{$CITRIX.ADC.API.PASSWORD}'
+          description: 'Citrix ADC NITRO monitoring password.'
+        - macro: '{$CITRIX.ADC.API.PORT}'
+          value: '443'
+          description: 'Default NITRO HTTPS port used when `{$CITRIX.ADC.API.URL}` is empty.'
+        - macro: '{$CITRIX.ADC.API.SCHEME}'
+          value: https
+          description: 'Default scheme used when `{$CITRIX.ADC.API.URL}` is empty.'
+        - macro: '{$CITRIX.ADC.API.URL}'
+          description: 'Optional NITRO base URL override. Example: `https://adc-mgmt.example.com:443`. If empty, the template uses `{HOST.CONN}` together with the scheme and port macros.'
+        - macro: '{$CITRIX.ADC.API.USER}'
+          description: 'Citrix ADC NITRO monitoring username.'
+        - macro: '{$CITRIX.ADC.DATA.INTERVAL}'
+          value: 1m
+          description: 'Polling interval for the master NITRO collection item.'
+        - macro: '{$CITRIX.ADC.DATA.TIMEOUT}'
+          value: 15s
+          description: 'Timeout for the master NITRO collection item.'
+        - macro: '{$CITRIX.ADC.HTTP.PROXY}'
+          description: 'Optional HTTP proxy for API requests. Format: `[protocol://][username[:password]@]proxy.example.com[:port]`.'
+        - macro: '{$CITRIX.ADC.MEMBER.ALERT.GROUP}'
+          value: '0'
+          description: 'Per-member down trigger enable flag by service-group context. Default: disabled to avoid noise.'
+        - macro: '{$CITRIX.ADC.MEMBER.DOWN.WINDOW}'
+          value: 3m
+          description: 'Backend member must remain Down for this long before opening an alert.'
+        - macro: '{$CITRIX.ADC.MEMBER.SERVICEGROUP.MATCHES}'
+          value: '.*'
+          description: 'Discover backend members only for service groups that match this regex.'
+        - macro: '{$CITRIX.ADC.MEMBER.SERVICEGROUP.NOT_MATCHES}'
+          value: '(?i)(^test|^dev|^demo|maintenance|drain|tmp)'
+          description: 'Do not discover backend members for service groups that match this regex.'
+        - macro: '{$CITRIX.ADC.NODATA}'
+          value: 10m
+          description: 'Maximum period without master NITRO data before opening an availability problem.'
+        - macro: '{$CITRIX.ADC.SERVICEGROUP.ALERT}'
+          value: '1'
+          description: 'Service-group down trigger enable flag. Use with pool name as context. Default: enabled.'
+        - macro: '{$CITRIX.ADC.SERVICEGROUP.DOWN.WINDOW}'
+          value: 3m
+          description: 'Service group must remain Down for this long before opening an alert.'
+        - macro: '{$CITRIX.ADC.SERVICEGROUP.NAME.MATCHES}'
+          value: '.*'
+          description: 'Discover only service-group names that match this regex.'
+        - macro: '{$CITRIX.ADC.SERVICEGROUP.NAME.NOT_MATCHES}'
+          value: '(?i)(^test|^dev|^demo|maintenance|drain|tmp)'
+          description: 'Do not discover service-group names that match this regex.'
+        - macro: '{$CITRIX.ADC.SYSTEM.CPU.CRIT}'
+          value: '90'
+          description: 'Critical threshold for sustained system CPU utilization.'
+        - macro: '{$CITRIX.ADC.SYSTEM.CPU.WARN}'
+          value: '80'
+          description: 'Warning threshold for sustained system CPU utilization.'
+        - macro: '{$CITRIX.ADC.SYSTEM.MEM.CRIT}'
+          value: '90'
+          description: 'Critical threshold for sustained system memory utilization.'
+        - macro: '{$CITRIX.ADC.SYSTEM.MEM.WARN}'
+          value: '80'
+          description: 'Warning threshold for sustained system memory utilization.'
+        - macro: '{$CITRIX.ADC.VSERVER.ALERT}'
+          value: '1'
+          description: 'VIP down trigger enable flag. Use with VIP name as context. Default: enabled.'
+        - macro: '{$CITRIX.ADC.VSERVER.DEGRADED.ALERT}'
+          value: '0'
+          description: 'VIP degraded-health trigger enable flag. Use with VIP name as context. Default: disabled.'
+        - macro: '{$CITRIX.ADC.VSERVER.DOWN.WINDOW}'
+          value: 3m
+          description: 'VIP must remain Down for this long before opening an alert.'
+        - macro: '{$CITRIX.ADC.VSERVER.HEALTH.MIN}'
+          value: '50'
+          description: 'Minimum VIP health percentage before the optional degraded-health trigger opens. Use with VIP name as context.'
+        - macro: '{$CITRIX.ADC.VSERVER.HEALTH.WINDOW}'
+          value: 5m
+          description: 'Evaluation window for the optional VIP degraded-health trigger.'
+        - macro: '{$CITRIX.ADC.VSERVER.NAME.MATCHES}'
+          value: '.*'
+          description: 'Discover only VIP names that match this regex.'
+        - macro: '{$CITRIX.ADC.VSERVER.NAME.NOT_MATCHES}'
+          value: '(?i)(^test|^dev|^demo|maintenance|drain|tmp)'
+          description: 'Do not discover VIP names that match this regex.'
+      dashboards:
+        - uuid: 5de8f9a7b136468aaa075a8f7939a878
+          name: 'Citrix ADC: Overview'
+          pages:
+            - name: Overview
+              widgets:
+                - type: item
+                  name: 'HA state'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.ha.state
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: gauge
+                  name: 'CPU usage'
+                  'y': '3'
+                  width: '24'
+                  height: '6'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.system.cpu.util
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '4'
+                    - type: INTEGER
+                      name: show.2
+                      value: '5'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 1A7C11
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: F7941D
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '60'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: F63100
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '80'
+                    - type: INTEGER
+                      name: th_arc_size
+                      value: '20'
+                    - type: INTEGER
+                      name: th_show_arc
+                      value: '1'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'HTTP req/s'
+                  'y': '9'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.http.requests.rate
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'System uptime'
+                  x: '12'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.system.uptime
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'SSL tx/s'
+                  x: '12'
+                  'y': '9'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.ssl.transactions.rate
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: gauge
+                  name: 'Memory usage'
+                  x: '24'
+                  'y': '3'
+                  width: '24'
+                  height: '6'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.system.memory.util
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '4'
+                    - type: INTEGER
+                      name: show.2
+                      value: '5'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 1A7C11
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: F7941D
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '60'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: F63100
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '80'
+                    - type: INTEGER
+                      name: th_arc_size
+                      value: '20'
+                    - type: INTEGER
+                      name: th_show_arc
+                      value: '1'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'RX throughput'
+                  x: '48'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.net.rx
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'Client connections'
+                  x: '48'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.net.client.conn
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'TX throughput'
+                  x: '60'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.net.tx
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+                - type: item
+                  name: 'Server connections'
+                  x: '60'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        key: citrix.adc.net.server.conn
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '18'
+            - name: VIPs
+              widgets:
+                - type: graphprototype
+                  name: 'VIP traffic'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        name: 'VIP [{#NAME}]: Traffic'
+                    - type: STRING
+                      name: reference
+                      value: VIPTR
+                - type: graphprototype
+                  name: 'VIP requests'
+                  'y': '5'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        name: 'VIP [{#NAME}]: Requests and responses'
+                    - type: STRING
+                      name: reference
+                      value: VIPRQ
+                - type: graphprototype
+                  name: 'VIP connections'
+                  'y': '10'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        name: 'VIP [{#NAME}]: Connections'
+                    - type: STRING
+                      name: reference
+                      value: VIPCN
+                - type: graphprototype
+                  name: 'VIP backend members'
+                  'y': '15'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        name: 'VIP [{#NAME}]: Backend member state'
+                    - type: STRING
+                      name: reference
+                      value: VIPMB
+            - name: Pools
+              widgets:
+                - type: graphprototype
+                  name: 'Pool backend members'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'Citrix ADC by NITRO API'
+                        name: 'Pool [{#NAME}]: Backend member state'
+                    - type: STRING
+                      name: reference
+                      value: POOLM
+      valuemaps:
+        - uuid: 9a214f50f9dc4c00b305452b2eeb45b8
+          name: 'Boolean yes/no'
+          mappings:
+            - value: '1'
+              newvalue: 'Yes'
+            - value: '0'
+              newvalue: 'No'
+        - uuid: 689d2929cbfc4fb584004bd36bde7363
+          name: 'Citrix ADC HA state'
+          mappings:
+            - value: '1'
+              newvalue: Up
+            - value: '2'
+              newvalue: Down
+            - value: '3'
+              newvalue: Inactive
+            - value: '4'
+              newvalue: Unknown
+        - uuid: c0842968c4974cdfac101b9f1654d0fc
+          name: 'Citrix ADC operational state'
+          mappings:
+            - value: '1'
+              newvalue: Up
+            - value: '2'
+              newvalue: Down
+            - value: '3'
+              newvalue: 'Out of service'
+            - value: '4'
+              newvalue: Unknown
+  triggers:
+    - uuid: 38025afca25c48d18606f8845ac89247
+      expression: 'last(/Citrix ADC by NITRO API/citrix.adc.ha.enabled)=1 and min(/Citrix ADC by NITRO API/citrix.adc.ha.state,5m)=2 and max(/Citrix ADC by NITRO API/citrix.adc.ha.state,5m)=2'
+      name: 'Citrix ADC: HA state is unhealthy'
+      opdata: 'Current HA state: {ITEM.LASTVALUE1}'
+      priority: HIGH
+      tags:
+        - tag: scope
+          value: availability
+  graphs:
+    - uuid: c9a18df6528941bea7c45abb838259b7
+      name: 'Citrix ADC: Aggregate throughput'
+      graph_items:
+        - color: 1A7C11
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.net.rx
+        - sortorder: '1'
+          color: 2774A4
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.net.tx
+    - uuid: 376c506702aa4c8eafafd78ab1ac317c
+      name: 'Citrix ADC: CPU utilization'
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 1A7C11
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.system.cpu.util
+    - uuid: de4d15083ecb4922a87966a9e984ca86
+      name: 'Citrix ADC: Current connections'
+      graph_items:
+        - color: 1A7C11
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.net.client.conn
+        - sortorder: '1'
+          color: 2774A4
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.net.server.conn
+    - uuid: f0a5ff14b2d44c02b2649dc2aca553f3
+      name: 'Citrix ADC: L7 transaction rates'
+      graph_items:
+        - color: 1A7C11
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.http.requests.rate
+        - sortorder: '1'
+          color: F7941D
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.ssl.transactions.rate
+    - uuid: b93a338a5bb241628b75a0ab2b0b9151
+      name: 'Citrix ADC: Memory utilization'
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 2774A4
+          item:
+            host: 'Citrix ADC by NITRO API'
+            key: citrix.adc.system.memory.util
