@@ -1,0 +1,23 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 9f32c6e8e1fa4fcbbbd3a506935f3e09
+      name: 'Iver Templates'
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    - uuid: 64cce06cbecb4c06a44a695463a15781
+      template: 'Windows Network Map by Zabbix agent active'
+      name: 'Windows Network Map by Zabbix agent active'
+      groups:
+        - name: 'Iver Templates'
+        - name: Templates
+      items:
+        - uuid: a64d13f544e1412085293929b7da3ed3
+          name: windows-network-connections
+          type: ZABBIX_ACTIVE
+          key: windows-network-connections
+          delay: 5m
+          value_type: TEXT
+          trends: '0'
+          timeout: 15s

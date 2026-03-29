@@ -1,0 +1,19 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    - uuid: 26540a0ff7ba4787ad25d366201c51db
+      template: 'Linux Network Map by Zabbix agent active'
+      name: 'Linux Network Map by Zabbix agent active'
+      groups:
+        - name: Templates
+      items:
+        - uuid: 06741de25d5044159d8e768d6d0a125a
+          name: linux-network-connections
+          type: ZABBIX_ACTIVE
+          key: linux-network-connections
+          delay: 5m
+          value_type: TEXT
+          trends: '0'
