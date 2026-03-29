@@ -9,8 +9,8 @@ zabbix_export:
   - uuid: 3dfc5ac9a74e4269bf29ab7783a33cbc
     template: FortiSwitch by FortiGate HTTP
     name: FortiSwitch by FortiGate HTTP
-    description: |-
-      Starter template for monitoring FortiSwitch devices that are managed by a FortiGate controller.
+    description: |
+      Updated template for monitoring FortiSwitch devices that are managed by a FortiGate controller.
 
       This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
       It reuses the same controller-side macros:
@@ -21,12 +21,31 @@ zabbix_export:
       - {$FGATE.DATA.TIMEOUT}
       - {$FGATE.HTTP.PROXY}
 
-      The template uses the FortiGate REST API to query managed FortiSwitch inventory and status. Because Fortinet's public
-      documentation exposes the endpoint families but not every field for every FortiOS build, the master JavaScript item
-      normalizes several common field names to improve compatibility across versions.
+      This revision prefers the newer FortiGate monitor endpoint for managed switch runtime status and augments it with:
+      - CMDB managed-switch data for configured values such as profile and description
+      - switch-group membership for the GUI "Switch Group" column
+
+      Normalized per-switch fields returned by the master item:
+      - serial
+      - name
+      - model
+      - ip
+      - version
+      - profile
+      - switch_group
+      - admin_state
+      - connection_state
+      - state_raw
+      - state_num
+      - flags
+      - join_time
+      - port_total
+      - port_up
+      - port_down
+      - description
     vendor:
       name: Keberneth
-      version: '7.0.0'
+      version: '7.0.1.1'
     groups:
     - name: Fortinet Office Network
     - name: Templates/Network devices
@@ -39,315 +58,657 @@ zabbix_export:
       history: '0'
       value_type: TEXT
       trends: '0'
-      params: |-
-        var params = JSON.parse(value),
-            request = new HttpRequest(),
-            result = {"ok": 0, "data": [], "error": ""},
-            api_url = "",
-            error_msg = "";
+      params: |2
+            var params = JSON.parse(value),
+                request = new HttpRequest(),
+                result = {"ok": 0, "data": [], "error": ""},
+                api_url = "",
+                error_msg = "";
 
-        function safeText(v) {
-            return (typeof v === 'undefined' || v === null) ? '' : String(v);
-        }
+            function isObject(v) {
+                return typeof v === 'object' && v !== null && !Array.isArray(v);
+            }
 
-        function first(obj, keys, def) {
-            var i, key;
-            if (typeof obj !== 'object' || obj === null) {
+            function safeText(v) {
+                return (typeof v === 'undefined' || v === null) ? '' : String(v);
+            }
+
+            function first(obj, keys, def) {
+                var i, key;
+                if (!isObject(obj)) {
+                    return def;
+                }
+                for (i = 0; i < keys.length; i++) {
+                    key = keys[i];
+                    if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
+                        return obj[key];
+                    }
+                }
                 return def;
             }
-            for (i = 0; i < keys.length; i++) {
-                key = keys[i];
-                if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
-                    return obj[key];
+
+            function arrify(response) {
+                var cands = ['results', 'result', 'data', 'entries'],
+                    i, r, out;
+
+                if (Array.isArray(response)) {
+                    return response;
                 }
-            }
-            return def;
-        }
 
-        function safeInt(v, def) {
-            var n = Number(v);
-            return isNaN(n) ? def : Math.floor(n);
-        }
+                if (!isObject(response)) {
+                    return [];
+                }
 
-        function arrify(response) {
-            var r, out;
-            if (typeof response !== 'object' || response === null) {
+                for (i = 0; i < cands.length; i++) {
+                    r = response[cands[i]];
+                    if (Array.isArray(r)) {
+                        return r;
+                    }
+                    if (isObject(r)) {
+                        out = [];
+                        Object.keys(r).forEach(function (k) {
+                            var item = r[k];
+                            if (!isObject(item)) {
+                                item = {"value": item};
+                            }
+                            if (typeof item.__key === 'undefined') {
+                                item.__key = k;
+                            }
+                            out.push(item);
+                        });
+                        return out;
+                    }
+                }
+
                 return [];
             }
 
-            r = response.results;
+            function getHttpData(url) {
+                var response;
 
-            if (Array.isArray(r)) {
-                return r;
+                response = request.get(url);
+                Zabbix.log(4, '[ FortiSwitch by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+
+                if (request.getStatus() !== 200) {
+                    throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
+                }
+
+                if (response !== null && response !== '') {
+                    try {
+                        response = JSON.parse(response);
+                    }
+                    catch (error) {
+                        throw 'Failed to parse response received from FortiGate API.';
+                    }
+                }
+
+                if (!isObject(response) && !Array.isArray(response)) {
+                    throw 'Cannot process response data: received data is not an object.';
+                }
+
+                return response;
             }
 
-            if (typeof r === 'object' && r !== null) {
-                out = [];
-                Object.keys(r).forEach(function (k) {
-                    var item = r[k];
-                    if (typeof item !== 'object' || item === null) {
-                        item = {"value": item};
+            function queryUrls(urls) {
+                var i, last_error = '';
+                for (i = 0; i < urls.length; i++) {
+                    try {
+                        return getHttpData(urls[i]);
                     }
-                    if (typeof item.__key === 'undefined') {
-                        item.__key = k;
+                    catch (error) {
+                        last_error = error.toString();
                     }
-                    out.push(item);
+                }
+                throw last_error;
+            }
+
+            function clean(v) {
+                return safeText(v).replace(/^\s+|\s+$/g, '');
+            }
+
+            function isMeaningfulString(s) {
+                return s !== '' && !/^(?:0|1|true|false|null|n\/a)$/i.test(s);
+            }
+
+            function likelyVersion(s) {
+                return /(?:^|[\s-])v?\d+\.\d+(?:\.\d+)?(?:\s*\(\d+\))?/i.test(s) ||
+                       /\bbuild\b/i.test(s) ||
+                       /\bGA\b/i.test(s) ||
+                       /-v\d+\.\d+\.\d+/i.test(s);
+            }
+
+            function likelyModel(s) {
+                return /(fortiswitch|^s\d{3,4}[a-z0-9-]+)/i.test(s);
+            }
+
+            function normalizeName(obj) {
+                var serial = clean(first(obj, ['serial', 'sn', 'q_origin_key', 'id'], '')),
+                    keys = ['switch_id', 'switch-id', 'name', 'switch_name', 'switch-name', 'hostname'],
+                    i, s;
+
+                for (i = 0; i < keys.length; i++) {
+                    s = clean(first(obj, [keys[i]], ''));
+                    if (isMeaningfulString(s) && s !== serial) {
+                        return s;
+                    }
+                }
+
+                for (i = 0; i < keys.length; i++) {
+                    s = clean(first(obj, [keys[i]], ''));
+                    if (isMeaningfulString(s)) {
+                        return s;
+                    }
+                }
+
+                return serial;
+            }
+
+            function deriveSwitchModelFromSerialOrVersion(serial, version) {
+                var s = clean(serial),
+                    v = clean(version),
+                    m = s.match(/^S(\d+)([A-Z])([A-Z])/i),
+                    img = v.match(/^([A-Z]\d+[A-Z]+)/i),
+                    prefix = '',
+                    family = '',
+                    variant = '';
+
+                if (m) {
+                    prefix = m[1];
+                    family = m[2];
+                    variant = m[3];
+                    if (/^[A-Z]$/.test(family)) {
+                        if (variant === 'P') {
+                            return 'FortiSwitch ' + prefix + family + '-POE';
+                        }
+                        if (variant === 'N') {
+                            return 'FortiSwitch ' + prefix + family;
+                        }
+                    }
+                }
+
+                if (img) {
+                    return img[1];
+                }
+
+                return '';
+            }
+
+            function normalizeVersion(obj) {
+                var keys = ['image_version', 'image-version', 'version', 'os_ver', 'firmware_version', 'firmware-version', 'firmware', 'image'],
+                    i, s, best = '';
+
+                for (i = 0; i < keys.length; i++) {
+                    s = clean(first(obj, [keys[i]], ''));
+                    if (!isMeaningfulString(s)) {
+                        continue;
+                    }
+                    if (likelyVersion(s)) {
+                        return s;
+                    }
+                    if (best === '' && /[A-Za-z]/.test(s)) {
+                        best = s;
+                    }
+                }
+
+                return best;
+            }
+
+            function normalizeModel(obj, serial, version) {
+                var keys = ['model_name', 'model-name', 'model', 'platform_str', 'platform-str', 'platform', 'product'],
+                    i, s;
+
+                for (i = 0; i < keys.length; i++) {
+                    s = clean(first(obj, [keys[i]], ''));
+                    if (isMeaningfulString(s) && likelyModel(s)) {
+                        return s;
+                    }
+                }
+
+                return deriveSwitchModelFromSerialOrVersion(serial, version);
+            }
+
+            function switchAliases(v) {
+                var serial = clean(first(v, ['serial', 'sn', 'q_origin_key', '__key', 'id'], '')),
+                    name = clean(normalizeName(v)),
+                    swid = clean(first(v, ['switch_id', 'switch-id'], ''));
+
+                return [serial, name, swid].filter(function (x, idx, arr) {
+                    return x !== '' && arr.indexOf(x) === idx;
                 });
+            }
+
+            function parseStatusParts(obj) {
+                var admin = clean(first(obj, ['admin_status', 'admin-status', 'admin_state', 'admin-state', 'authorization', 'admin'], '')),
+                    conn = clean(first(obj, ['connection_state', 'connection-state', 'connection', 'run_state', 'run-state', 'oper_state', 'oper-state', 'fortilink_status', 'fortilink-status', 'conn_status', 'conn-status', 'link'], '')),
+                    combined = clean(first(obj, ['status', 'state'], '')),
+                    raw = '',
+                    parts, num = 2;
+
+                if (combined !== '' && combined.indexOf('/') !== -1) {
+                    parts = combined.split('/');
+                    if (admin === '') {
+                        admin = clean(parts[0]);
+                    }
+                    if (conn === '') {
+                        conn = clean(parts.slice(1).join('/'));
+                    }
+                    raw = combined;
+                }
+                else if (combined !== '') {
+                    if (conn === '' && /(up|down|connected|disconnected|online|offline|healthy|lost|dead|missing)/i.test(combined)) {
+                        conn = combined;
+                    }
+                    else if (admin === '' && /(authorized|unauthorized|discovered|disabled|enable|disable)/i.test(combined)) {
+                        admin = combined;
+                    }
+                    raw = combined;
+                }
+
+                if (raw === '') {
+                    if (admin !== '' && conn !== '') {
+                        raw = admin + '/' + conn;
+                    }
+                    else {
+                        raw = conn !== '' ? conn : admin;
+                    }
+                }
+
+                if (/(authorized\/up|connected\s*\(|\bconnected\b|\bonline\b|\bhealthy\b|\bup\b)/i.test(raw) || /(connected|up|online|healthy)/i.test(conn)) {
+                    num = 1;
+                }
+                else if (/(discovered\/down|unauthorized|disconnected|offline|lost|dead|missing|\bdown\b)/i.test(raw) || /(disconnected|offline|down|lost|dead|missing)/i.test(conn)) {
+                    num = 0;
+                }
+                else if (clean(first(obj, ['address', 'ip', 'ip-address', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], '')) !== '' &&
+                         normalizeVersion(obj) !== '' &&
+                         !/^N\/A$/i.test(normalizeVersion(obj))) {
+                    num = 1;
+                }
+                else if (/^N\/A$/i.test(normalizeVersion(obj))) {
+                    num = 0;
+                }
+
+                if (raw === '') {
+                    raw = num === 1 ? 'up' : (num === 0 ? 'down' : 'unknown');
+                }
+
+                return {"raw": raw, "num": num, "admin": admin, "conn": conn};
+            }
+
+            function normalizeIp(obj) {
+                return clean(first(obj, ['address', 'ip', 'ip-address', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], ''));
+            }
+
+            function normalizeProfile(obj) {
+                return clean(first(obj, ['switch_profile', 'switch-profile', 'profile', 'switch-profile-name'], ''));
+            }
+
+            function normalizeJoinTime(obj) {
+                return clean(first(obj, ['join_time', 'join-time', 'join time'], ''));
+            }
+
+            function normalizeFlags(obj) {
+                return clean(first(obj, ['flag', 'flags'], ''));
+            }
+
+            function extractPortSummary(obj) {
+                var out = {"total": 0, "up": 0, "down": 0},
+                    explicit = Number(first(obj, ['port_total', 'ports_total', 'port_count', 'ports_count', 'max_ports'], NaN)),
+                    candidates = [
+                        first(obj, ['ports'], null),
+                        first(obj, ['interfaces'], null),
+                        first(obj, ['port_stats'], null),
+                        first(obj, ['port-stats'], null)
+                    ],
+                    i, c, keys, j, p, link;
+
+                if (!isNaN(explicit)) {
+                    out.total = Math.floor(explicit);
+                }
+
+                for (i = 0; i < candidates.length; i++) {
+                    c = candidates[i];
+                    if (Array.isArray(c)) {
+                        if (out.total === 0) {
+                            out.total = c.length;
+                        }
+                        for (j = 0; j < c.length; j++) {
+                            p = c[j];
+                            if (!isObject(p)) {
+                                continue;
+                            }
+                            link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
+                            if (link === 'up' || link === 'connected') {
+                                out.up += 1;
+                            }
+                            else if (link === 'down' || link === 'disconnected') {
+                                out.down += 1;
+                            }
+                        }
+                        return out;
+                    }
+                    if (isObject(c)) {
+                        keys = Object.keys(c);
+                        if (out.total === 0) {
+                            out.total = keys.length;
+                        }
+                        for (j = 0; j < keys.length; j++) {
+                            p = c[keys[j]];
+                            if (!isObject(p)) {
+                                continue;
+                            }
+                            link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
+                            if (link === 'up' || link === 'connected') {
+                                out.up += 1;
+                            }
+                            else if (link === 'down' || link === 'disconnected') {
+                                out.down += 1;
+                            }
+                        }
+                        return out;
+                    }
+                }
+
                 return out;
             }
 
-            return [];
-        }
+            function memberIds(group_item) {
+                var m = first(group_item, ['members'], []),
+                    out = [];
 
-        function getHttpData(url) {
-            var response;
+                function pushMember(v) {
+                    var s = clean(v);
+                    if (s !== '' && out.indexOf(s) === -1) {
+                        out.push(s);
+                    }
+                }
 
-            response = request.get(url);
-            Zabbix.log(4, '[ FortiSwitch by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+                if (Array.isArray(m)) {
+                    m.forEach(function (x) {
+                        if (typeof x === 'string' || typeof x === 'number') {
+                            pushMember(x);
+                        }
+                        else if (isObject(x)) {
+                            pushMember(first(x, ['switch_id', 'switch-id', 'name', 'q_origin_key', 'serial'], ''));
+                        }
+                    });
+                }
+                else if (typeof m === 'string') {
+                    m.split(/\s*,\s*/).forEach(pushMember);
+                }
 
-            if (request.getStatus() !== 200) {
-                throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
+                return out;
             }
 
-            if (response !== null && response !== '') {
+            try {
+                ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+                    var macro = '{$FGATE.' + field.toUpperCase() + '}';
+                    var key = field.split('.').pop();
+
+                    if (typeof params[key] === 'undefined') {
+                        throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+                    }
+
+                    if (params[key] === macro || params[key] === '') {
+                        throw 'Please change ' + macro + ' macro to the proper value.';
+                    }
+                });
+
+                if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+                    request.setProxy(params.http_proxy);
+                }
+
+                api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+
+                var status_resp = null,
+                    legacy_monitor_resp = null,
+                    cmdb_resp = null,
+                    group_resp = null,
+                    devices = {},
+                    alias_to_key = {},
+                    groups_by_alias = {},
+                    partial_errors = [];
+
                 try {
-                    response = JSON.parse(response);
+                    status_resp = queryUrls([
+                        api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                        api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&count=1000'
+                    ]);
                 }
                 catch (error) {
-                    throw 'Failed to parse response received from FortiGate API.';
-                }
-            }
-
-            if (typeof response !== 'object' || response === null) {
-                throw 'Cannot process response data: received data is not an object.';
-            }
-
-            return response;
-        }
-
-        function switchAliases(v) {
-            return [
-                safeText(first(v, ['serial', 'sn', 'switch_id', 'switch-id', 'q_origin_key', '__key', 'id'], '')),
-                safeText(first(v, ['name', 'switch_name', 'switch-name', 'hostname'], ''))
-            ];
-        }
-
-        function runtimeState(v) {
-            var raw = safeText(first(v, [
-                'connection_state',
-                'connection-state',
-                'connection',
-                'state',
-                'fortilink_status',
-                'fortilink-status',
-                'conn_status',
-                'link',
-                'status'
-            ], ''));
-            var s = raw.toLowerCase();
-
-            if (['up', 'connected', 'online', 'true', '1', 'ok', 'healthy'].indexOf(s) !== -1) {
-                return {"num": 1, "raw": raw};
-            }
-
-            if (['down', 'disconnected', 'offline', 'false', '0', 'error', 'failed', 'lost'].indexOf(s) !== -1) {
-                return {"num": 0, "raw": raw};
-            }
-
-            return {"num": 2, "raw": raw === '' ? 'unknown' : raw};
-        }
-
-        function portCount(v) {
-            var fields = ['port_total', 'ports_total', 'port_count', 'ports_count', 'max_ports'];
-            var ports = first(v, ['ports', 'interfaces'], null);
-            var i, n;
-
-            for (i = 0; i < fields.length; i++) {
-                n = Number(v[fields[i]]);
-                if (!isNaN(n)) {
-                    return Math.floor(n);
-                }
-            }
-
-            if (Array.isArray(ports)) {
-                return ports.length;
-            }
-
-            if (typeof ports === 'object' && ports !== null) {
-                return Object.keys(ports).length;
-            }
-
-            return 0;
-        }
-
-        try {
-            ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-                var macro = '{$FGATE.' + field.toUpperCase() + '}';
-                var key = field.split('.').pop();
-
-                if (typeof params[key] === 'undefined') {
-                    throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+                    partial_errors.push('status endpoint failed: ' + error);
                 }
 
-                if (params[key] === macro || params[key] === '') {
-                    throw 'Please change ' + macro + ' macro to the proper value.';
+                try {
+                    legacy_monitor_resp = queryUrls([
+                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000&poe=true&port_stats=true&transceiver=true',
+                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
+                    ]);
                 }
-            });
+                catch (error) {
+                    partial_errors.push('legacy monitor endpoint failed: ' + error);
+                }
 
-            if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
-                request.setProxy(params.http_proxy);
-            }
+                try {
+                    cmdb_resp = getHttpData(
+                        api_url + '/api/v2/cmdb/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
+                    );
+                }
+                catch (error) {
+                    partial_errors.push('cmdb managed-switch endpoint failed: ' + error);
+                }
 
-            api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+                try {
+                    group_resp = getHttpData(
+                        api_url + '/api/v2/cmdb/switch-controller/switch-group?access_token=' + encodeURIComponent(params.token)
+                    );
+                }
+                catch (error) {
+                    partial_errors.push('cmdb switch-group endpoint failed: ' + error);
+                }
 
-            var monitor_resp = null,
-                cmdb_resp = null,
-                devices = {},
-                alias_to_key = {},
-                partial_errors = [];
+                if (status_resp === null && legacy_monitor_resp === null && cmdb_resp === null) {
+                    throw partial_errors.join(' ');
+                }
 
-            try {
-                monitor_resp = getHttpData(
-                    api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
-                );
-            }
-            catch (error) {
-                partial_errors.push('monitor endpoint failed: ' + error);
-            }
+                function resolveKey(v) {
+                    var aliases = switchAliases(v),
+                        key = '',
+                        i;
 
-            try {
-                cmdb_resp = getHttpData(
-                    api_url + '/api/v2/cmdb/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
-                );
-            }
-            catch (error) {
-                partial_errors.push('cmdb endpoint failed: ' + error);
-            }
-
-            if (monitor_resp === null && cmdb_resp === null) {
-                throw partial_errors.join(' ');
-            }
-
-            function resolveKey(v) {
-                var aliases = switchAliases(v),
-                    key = '',
-                    i;
-
-                for (i = 0; i < aliases.length; i++) {
-                    if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
-                        key = alias_to_key[aliases[i]];
-                        break;
+                    for (i = 0; i < aliases.length; i++) {
+                        if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
+                            key = alias_to_key[aliases[i]];
+                            break;
+                        }
                     }
-                }
 
-                if (key === '') {
-                    key = aliases[0] !== '' ? aliases[0] : aliases[1];
-                }
-
-                if (key === '') {
-                    return '';
-                }
-
-                for (i = 0; i < aliases.length; i++) {
-                    if (aliases[i] !== '') {
-                        alias_to_key[aliases[i]] = key;
+                    if (key === '') {
+                        key = aliases.length > 0 ? aliases[0] : '';
                     }
+
+                    if (key === '') {
+                        return '';
+                    }
+
+                    aliases.forEach(function (a) {
+                        alias_to_key[a] = key;
+                    });
+
+                    return key;
                 }
 
-                return key;
-            }
-
-            arrify(cmdb_resp || {}).forEach(function (item) {
-                var key;
-                if (typeof item !== 'object' || item === null) {
-                    return;
+                function mergeObjects(target, src) {
+                    Object.keys(src || {}).forEach(function (x) {
+                        target[x] = src[x];
+                    });
                 }
 
-                key = resolveKey(item);
-                if (key === '') {
-                    return;
-                }
+                arrify(cmdb_resp || {}).forEach(function (item) {
+                    var key;
+                    if (!isObject(item)) {
+                        return;
+                    }
 
-                if (typeof devices[key] === 'undefined') {
-                    devices[key] = {"cfg": {}, "mon": {}};
-                }
+                    key = resolveKey(item);
+                    if (key === '') {
+                        return;
+                    }
 
-                devices[key].cfg = item;
-            });
+                    if (typeof devices[key] === 'undefined') {
+                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
+                    }
 
-            arrify(monitor_resp || {}).forEach(function (item) {
-                var key;
-                if (typeof item !== 'object' || item === null) {
-                    return;
-                }
-
-                key = resolveKey(item);
-                if (key === '') {
-                    return;
-                }
-
-                if (typeof devices[key] === 'undefined') {
-                    devices[key] = {"cfg": {}, "mon": {}};
-                }
-
-                devices[key].mon = item;
-            });
-
-            result.data = Object.keys(devices).map(function (k) {
-                var merged = {},
-                    cfg = devices[k].cfg || {},
-                    mon = devices[k].mon || {},
-                    state;
-
-                Object.keys(cfg).forEach(function (x) {
-                    merged[x] = cfg[x];
+                    devices[key].cfg = item;
                 });
 
-                Object.keys(mon).forEach(function (x) {
-                    merged[x] = mon[x];
+                arrify(status_resp || {}).forEach(function (item) {
+                    var key;
+                    if (!isObject(item)) {
+                        return;
+                    }
+
+                    key = resolveKey(item);
+                    if (key === '') {
+                        return;
+                    }
+
+                    if (typeof devices[key] === 'undefined') {
+                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
+                    }
+
+                    devices[key].status = item;
                 });
 
-                state = runtimeState(merged);
+                arrify(legacy_monitor_resp || {}).forEach(function (item) {
+                    var key;
+                    if (!isObject(item)) {
+                        return;
+                    }
 
-                return {
-                    "key": k,
-                    "serial": safeText(first(merged, ['serial', 'sn', 'switch_id', 'switch-id', 'q_origin_key', 'id'], k)),
-                    "name": safeText(first(merged, ['name', 'switch_name', 'switch-name', 'hostname'], k)),
-                    "model": safeText(first(merged, ['model', 'model_name', 'fsw_model', 'platform', 'platform_str', 'product'], '')),
-                    "ip": safeText(first(merged, ['ip', 'ip-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], '')),
-                    "version": safeText(first(merged, ['version', 'os_ver', 'firmware', 'firmware_version'], '')),
-                    "profile": safeText(first(merged, ['switch_profile', 'switch-profile', 'profile'], '')),
-                    "state_raw": state.raw,
-                    "state_num": state.num,
-                    "port_total": portCount(merged),
-                    "description": safeText(first(merged, ['description', 'comments'], ''))
-                };
-            });
+                    key = resolveKey(item);
+                    if (key === '') {
+                        return;
+                    }
 
-            result.data.sort(function (a, b) {
-                if (a.name < b.name) {
-                    return -1;
+                    if (typeof devices[key] === 'undefined') {
+                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
+                    }
+
+                    devices[key].legacy = item;
+                });
+
+                arrify(group_resp || {}).forEach(function (item) {
+                    var gname;
+                    if (!isObject(item)) {
+                        return;
+                    }
+
+                    gname = clean(first(item, ['name', 'q_origin_key', 'id'], ''));
+                    if (gname === '') {
+                        return;
+                    }
+
+                    memberIds(item).forEach(function (m) {
+                        if (typeof groups_by_alias[m] === 'undefined') {
+                            groups_by_alias[m] = {};
+                        }
+                        groups_by_alias[m][gname] = true;
+                    });
+                });
+
+                result.data = Object.keys(devices).map(function (k) {
+                    var merged = {},
+                        cfg = devices[k].cfg || {},
+                        status = devices[k].status || {},
+                        legacy = devices[k].legacy || {},
+                        aliases = [],
+                        alias_seen = {},
+                        state,
+                        serial,
+                        name,
+                        version,
+                        model,
+                        port_summary,
+                        group_names = {};
+
+                    mergeObjects(merged, cfg);
+                    mergeObjects(merged, legacy);
+                    mergeObjects(merged, status);
+
+                    serial = clean(first(merged, ['serial', 'sn', 'q_origin_key', 'id'], k));
+                    name = clean(normalizeName(merged));
+                    version = clean(normalizeVersion(merged));
+                    model = clean(normalizeModel(merged, serial, version));
+                    state = parseStatusParts(merged);
+                    port_summary = extractPortSummary(merged);
+
+                    switchAliases(merged).concat([k]).forEach(function (a) {
+                        if (a !== '' && typeof alias_seen[a] === 'undefined') {
+                            alias_seen[a] = true;
+                            aliases.push(a);
+                        }
+                    });
+
+                    aliases.forEach(function (a) {
+                        if (typeof groups_by_alias[a] !== 'undefined') {
+                            Object.keys(groups_by_alias[a]).forEach(function (g) {
+                                group_names[g] = true;
+                            });
+                        }
+                    });
+
+                    return {
+                        "key": k,
+                        "serial": serial,
+                        "name": name !== '' ? name : serial,
+                        "model": model,
+                        "ip": normalizeIp(merged),
+                        "version": version,
+                        "profile": normalizeProfile(merged),
+                        "switch_group": Object.keys(group_names).sort().join(', '),
+                        "admin_state": state.admin,
+                        "connection_state": state.conn,
+                        "state_raw": state.raw,
+                        "state_num": state.num,
+                        "flags": normalizeFlags(merged),
+                        "join_time": normalizeJoinTime(merged),
+                        "port_total": port_summary.total,
+                        "port_up": port_summary.up,
+                        "port_down": port_summary.down,
+                        "description": clean(first(merged, ['description', 'comments'], ''))
+                    };
+                });
+
+                result.data.sort(function (a, b) {
+                    if (a.name < b.name) {
+                        return -1;
+                    }
+                    if (a.name > b.name) {
+                        return 1;
+                    }
+                    return 0;
+                });
+
+                result.ok = 1;
+                if (partial_errors.length === 0) {
+                    result.error = '';
                 }
-                if (a.name > b.name) {
-                    return 1;
+                else if (result.data.length > 0) {
+                    result.error = partial_errors.join(' | ');
                 }
-                return 0;
-            });
-
-            result.ok = 1;
-            if (partial_errors.length === 0) {
-                result.error = '';
             }
-        }
-        catch (error) {
-            error_msg = error.toString();
-            error_msg += error_msg.endsWith('.') ? '' : '.';
-            Zabbix.log(3, '[ FortiSwitch by FortiGate HTTP ] ERROR: ' + error_msg);
-            result.error = error_msg;
-        }
+            catch (error) {
+                error_msg = error.toString();
+                error_msg += error_msg.endsWith('.') ? '' : '.';
+                Zabbix.log(3, '[ FortiSwitch by FortiGate HTTP ] ERROR: ' + error_msg);
+                result.error = error_msg;
+            }
 
-        return JSON.stringify(result);
-      description: Item for gathering managed FortiSwitch inventory and status from the FortiGate API.
+            return JSON.stringify(result);
+      description: Item for gathering managed FortiSwitch inventory, controller runtime status, switch-group membership, and
+        basic port summary from the FortiGate API.
       timeout: '{$FGATE.DATA.TIMEOUT}'
       parameters:
       - name: fqdn
@@ -387,7 +748,8 @@ zabbix_export:
         expression: last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0
         name: Unexpected response from API
         priority: AVERAGE
-        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.
+        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by
+          this FortiOS build.
         tags:
         - tag: scope
           value: availability
@@ -456,8 +818,7 @@ zabbix_export:
         error_handler_params: '[]'
       - type: JAVASCRIPT
         parameters:
-        - |-
-          var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;
+        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;
       - type: DISCARD_UNCHANGED_HEARTBEAT
         parameters:
         - 1h
@@ -490,6 +851,8 @@ zabbix_export:
         path: $.model
       - lld_macro: '{#SWIP}'
         path: $.ip
+      - lld_macro: '{#SWGROUP}'
+        path: $.switch_group
       item_prototypes:
       - uuid: d6ed6f8fee8a48e4a716bd9c77f10648
         name: 'FortiSwitch [{#SWNAME}]: Get data'
@@ -510,7 +873,9 @@ zabbix_export:
         tags:
         - tag: component
           value: raw
-      - uuid: e874ce55686e4731b1b3bb0ebba81a44
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 432806ac6c724327aee3b08a23788144
         name: 'FortiSwitch [{#SWNAME}]: State'
         type: DEPENDENT
         key: fgsw.switch.state[{#SWKEY}]
@@ -529,14 +894,16 @@ zabbix_export:
           value: switch
         - tag: switch
           value: '{#SWNAME}'
-      - uuid: 9c8e374e2bb44fa2be3dd24830a20275
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: dad88e56f76b45039a1910f08066e6a3
         name: 'FortiSwitch [{#SWNAME}]: State raw'
         type: DEPENDENT
         key: fgsw.switch.state_raw[{#SWKEY}]
         delay: '0'
         master_item:
           key: fgsw.switch.get_data[{#SWKEY}]
-        description: Raw state string returned by the API normalization script.
+        description: Raw runtime state string of the managed FortiSwitch.
         value_type: CHAR
         trends: '0'
         preprocessing:
@@ -548,14 +915,100 @@ zabbix_export:
           value: switch
         - tag: switch
           value: '{#SWNAME}'
-      - uuid: 331eb2ee8ffa40faa84052ba414767bd
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 703c67453c9042c59385fd9f99cfd2ba
+        name: 'FortiSwitch [{#SWNAME}]: Admin state'
+        type: DEPENDENT
+        key: fgsw.switch.admin[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Administrative or authorization state of the managed FortiSwitch.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.admin_state
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: d347b031e72c487b8cc86705ccc83c72
+        name: 'FortiSwitch [{#SWNAME}]: Connection state'
+        type: DEPENDENT
+        key: fgsw.switch.connection[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Connection state reported by the FortiGate controller for the managed FortiSwitch.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.connection_state
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: db1da8fd49e14ee5aa49bd360bdb800c
+        name: 'FortiSwitch [{#SWNAME}]: Switch name'
+        type: DEPENDENT
+        key: fgsw.switch.name[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Resolved FortiSwitch name used by the controller and item names.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.name
+        tags:
+        - tag: component
+          value: system
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 648f1e99d3b34eb3b750fa5ecc65c1c0
+        name: 'FortiSwitch [{#SWNAME}]: Serial number'
+        type: DEPENDENT
+        key: fgsw.switch.serial[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: FortiSwitch serial number.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.serial
+        tags:
+        - tag: component
+          value: system
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 6a7424a3839748ddaedb39de92f674a2
         name: 'FortiSwitch [{#SWNAME}]: IP address'
         type: DEPENDENT
         key: fgsw.switch.ip[{#SWKEY}]
         delay: '0'
         master_item:
           key: fgsw.switch.get_data[{#SWKEY}]
-        description: Management IP address of the FortiSwitch.
+        description: Management or connecting IP address of the FortiSwitch.
         value_type: CHAR
         trends: '0'
         preprocessing:
@@ -567,14 +1020,16 @@ zabbix_export:
           value: network
         - tag: switch
           value: '{#SWNAME}'
-      - uuid: 3f5f8f9f251244c4bb98085bea19640a
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 45058af7f47f4613857686f2b66d9d35
         name: 'FortiSwitch [{#SWNAME}]: Model'
         type: DEPENDENT
         key: fgsw.switch.model[{#SWKEY}]
         delay: '0'
         master_item:
           key: fgsw.switch.get_data[{#SWKEY}]
-        description: Model of the FortiSwitch.
+        description: Model of the managed FortiSwitch.
         value_type: CHAR
         trends: '0'
         preprocessing:
@@ -586,14 +1041,16 @@ zabbix_export:
           value: system
         - tag: switch
           value: '{#SWNAME}'
-      - uuid: 8c0b9b248a504812978f817b6d86af25
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 56a4918c97ba4f42a98563a618d8bce0
         name: 'FortiSwitch [{#SWNAME}]: Firmware version'
         type: DEPENDENT
         key: fgsw.switch.version[{#SWKEY}]
         delay: '0'
         master_item:
           key: fgsw.switch.get_data[{#SWKEY}]
-        description: Firmware version of the FortiSwitch if returned by the controller API.
+        description: Runtime firmware version of the managed FortiSwitch if returned by the controller API.
         value_type: CHAR
         trends: '0'
         preprocessing:
@@ -605,24 +1062,9 @@ zabbix_export:
           value: system
         - tag: switch
           value: '{#SWNAME}'
-      - uuid: f6616f3b8f6942448dfe29b936ed2e6e
-        name: 'FortiSwitch [{#SWNAME}]: Port count'
-        type: DEPENDENT
-        key: fgsw.switch.ports[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Total ports discovered for the FortiSwitch.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.port_total
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-      - uuid: e9f1c62e8ec342eab1b7747543677779
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 7a7abc19f3f6485fa7c353f286718646
         name: 'FortiSwitch [{#SWNAME}]: Profile'
         type: DEPENDENT
         key: fgsw.switch.profile[{#SWKEY}]
@@ -641,6 +1083,150 @@ zabbix_export:
           value: switch
         - tag: switch
           value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: b2064b34bb184cb3b068d6f3a084a6aa
+        name: 'FortiSwitch [{#SWNAME}]: Switch group'
+        type: DEPENDENT
+        key: fgsw.switch.group[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Comma-separated FortiSwitch group membership resolved from switch-controller switch-group.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.switch_group
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: d802da5aa76943dfba6a929ae1bb8ebd
+        name: 'FortiSwitch [{#SWNAME}]: Join time'
+        type: DEPENDENT
+        key: fgsw.switch.join_time[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Last join time reported by the FortiGate controller.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.join_time
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: a84ed847d9ed46b9a8ddf14584b29a44
+        name: 'FortiSwitch [{#SWNAME}]: Flags'
+        type: DEPENDENT
+        key: fgsw.switch.flags[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Flag string from the controller runtime status, such as L2/L3 or other FortiLink flags.
+        value_type: CHAR
+        trends: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.flags
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 7757441a58204aaa834955e009f0051b
+        name: 'FortiSwitch [{#SWNAME}]: Port count'
+        type: DEPENDENT
+        key: fgsw.switch.ports[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Total number of ports discovered for the FortiSwitch.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.port_total
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 9306761af7d940e8a390b4b19611393e
+        name: 'FortiSwitch [{#SWNAME}]: Ports up'
+        type: DEPENDENT
+        key: fgsw.switch.ports_up[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Count of switch ports currently reported up by the controller, when available.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.port_up
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: 5483758dd0ca410f862b279a73b287f7
+        name: 'FortiSwitch [{#SWNAME}]: Ports down'
+        type: DEPENDENT
+        key: fgsw.switch.ports_down[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Count of switch ports currently reported down by the controller, when available.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.port_down
+        tags:
+        - tag: component
+          value: switch
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
+      - uuid: da4dc623368045f1ade05107aad93f3f
+        name: 'FortiSwitch [{#SWNAME}]: Description'
+        type: DEPENDENT
+        key: fgsw.switch.description[{#SWKEY}]
+        delay: '0'
+        master_item:
+          key: fgsw.switch.get_data[{#SWKEY}]
+        description: Description or comments configured on the managed FortiSwitch.
+        value_type: TEXT
+        trends: '0'
+        history: 7d
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.description
+        tags:
+        - tag: component
+          value: system
+        - tag: switch
+          value: '{#SWNAME}'
+        - tag: switch_group
+          value: '{#SWGROUP}'
       trigger_prototypes:
       - uuid: 47cfd56595f74343984685c80f8bf854
         expression: last(/FortiSwitch by FortiGate HTTP/fgsw.switch.state[{#SWKEY}])=0
