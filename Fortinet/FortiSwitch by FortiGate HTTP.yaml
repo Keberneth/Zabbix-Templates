@@ -1,15 +1,15 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-  - uuid: 14e7de6aeadf4cdb95fc052ac19cda0f
+  - uuid: df97989912ff40919985d25706920120
     name: Fortinet Office Network
-  - uuid: 52ef8af8c6734325a48f2318366b1786
+  - uuid: 41d23565286045a6855bdf9b7c52dc87
     name: Templates/Network devices
   templates:
   - uuid: 3dfc5ac9a74e4269bf29ab7783a33cbc
     template: FortiSwitch by FortiGate HTTP
     name: FortiSwitch by FortiGate HTTP
-    description: |
+    description: |-
       Updated template for monitoring FortiSwitch devices that are managed by a FortiGate controller.
 
       This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
@@ -43,9 +43,12 @@ zabbix_export:
       - port_up
       - port_down
       - description
+
+
+      This revision also adds aggregate switch/port items, graph prototypes, and dashboard pages for overview and per-switch statistics.
     vendor:
       name: Keberneth
-      version: '7.0.1.1'
+      version: '7.0.1.2'
     groups:
     - name: Fortinet Office Network
     - name: Templates/Network devices
@@ -234,7 +237,7 @@ zabbix_export:
             }
 
             function normalizeVersion(obj) {
-                var keys = ['image_version', 'image-version', 'version', 'os_ver', 'firmware_version', 'firmware-version', 'firmware', 'image'],
+                var keys = ['image_version', 'image-version', 'version', 'os_version', 'os-version', 'os_ver', 'firmware_version', 'firmware-version', 'firmware', 'image'],
                     i, s, best = '';
 
                 for (i = 0; i < keys.length; i++) {
@@ -336,7 +339,7 @@ zabbix_export:
             }
 
             function normalizeIp(obj) {
-                return clean(first(obj, ['address', 'ip', 'ip-address', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], ''));
+                return clean(first(obj, ['address', 'ip', 'ip-address', 'connecting_from', 'connecting-from', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], ''));
             }
 
             function normalizeProfile(obj) {
@@ -692,12 +695,7 @@ zabbix_export:
                 });
 
                 result.ok = 1;
-                if (partial_errors.length === 0) {
-                    result.error = '';
-                }
-                else if (result.data.length > 0) {
-                    result.error = partial_errors.join(' | ');
-                }
+                        result.error = '';
             }
             catch (error) {
                 error_msg = error.toString();
@@ -707,8 +705,7 @@ zabbix_export:
             }
 
             return JSON.stringify(result);
-      description: Item for gathering managed FortiSwitch inventory, controller runtime status, switch-group membership, and
-        basic port summary from the FortiGate API.
+      description: Item for gathering managed FortiSwitch inventory, controller runtime status, switch-group membership, and basic port summary from the FortiGate API.
       timeout: '{$FGATE.DATA.TIMEOUT}'
       parameters:
       - name: fqdn
@@ -748,8 +745,7 @@ zabbix_export:
         expression: last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0
         name: Unexpected response from API
         priority: AVERAGE
-        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by
-          this FortiOS build.
+        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.
         tags:
         - tag: scope
           value: availability
@@ -819,6 +815,130 @@ zabbix_export:
       - type: JAVASCRIPT
         parameters:
         - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: da3837db88364736a573c9440698722e
+      name: Managed FortiSwitch not connected
+      type: DEPENDENT
+      key: fgsw.switch.not_connected
+      delay: '0'
+      description: Number of managed FortiSwitch devices not currently normalized as up. This includes down or unknown states.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: d90bdef8afda45798f55e5654e57c9b1
+      name: Managed FortiSwitch connected (%)
+      type: DEPENDENT
+      key: fgsw.switch.connected_pct
+      delay: '0'
+      value_type: FLOAT
+      units: '%'
+      description: Percentage of managed FortiSwitch devices currently normalized as up.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: 45ad96d698a644e3879c97281b353781
+      name: Total FortiSwitch ports
+      type: DEPENDENT
+      key: fgsw.port.total
+      delay: '0'
+      description: Total number of switch ports across all managed FortiSwitch devices returned by the controller.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_total || 0); }, 0);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: 7969ff1e444b404b84891d1e37a1a46d
+      name: FortiSwitch ports up
+      type: DEPENDENT
+      key: fgsw.port.up
+      delay: '0'
+      description: Total number of managed FortiSwitch ports currently reported up by the controller.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_up || 0); }, 0);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: 01603ddf56324a5996e84eac50bb7374
+      name: FortiSwitch ports down
+      type: DEPENDENT
+      key: fgsw.port.down
+      delay: '0'
+      description: Total number of managed FortiSwitch ports currently reported down by the controller.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_down || 0); }, 0);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fgsw.switches.get_data
+    - uuid: 31edfefa2bf14a758f09740e49a4724c
+      name: FortiSwitch ports up (%)
+      type: DEPENDENT
+      key: fgsw.port.up_pct
+      delay: '0'
+      value_type: FLOAT
+      units: '%'
+      description: Percentage of managed FortiSwitch ports currently reported up by the controller.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - 'var data = JSON.parse(value), total = 0, up = 0; data.forEach(function (v) { total += Number(v.port_total || 0); up += Number(v.port_up || 0); }); return total > 0 ? (up * 100 / total).toFixed(2) : 0;'
       - type: DISCARD_UNCHANGED_HEARTBEAT
         parameters:
         - 1h
@@ -1237,6 +1357,34 @@ zabbix_export:
         tags:
         - tag: scope
           value: availability
+      graph_prototypes:
+      - uuid: cdf7f422e1d44037840dcfe5463b4762
+        name: 'FortiSwitch [{#SWNAME}]: Port states'
+        graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 1E88E5
+          item:
+            host: FortiSwitch by FortiGate HTTP
+            key: fgsw.switch.ports[{#SWKEY}]
+        - sortorder: '1'
+          drawtype: BOLD_LINE
+          color: 199C0D
+          item:
+            host: FortiSwitch by FortiGate HTTP
+            key: fgsw.switch.ports_up[{#SWKEY}]
+        - sortorder: '2'
+          drawtype: BOLD_LINE
+          color: F63100
+          item:
+            host: FortiSwitch by FortiGate HTTP
+            key: fgsw.switch.ports_down[{#SWKEY}]
+      - uuid: bd26e98bb6984fa385cf53f1a81bf498
+        name: 'FortiSwitch [{#SWNAME}]: Runtime state'
+        graph_items:
+        - color: 199C0D
+          item:
+            host: FortiSwitch by FortiGate HTTP
+            key: fgsw.switch.state[{#SWKEY}]
     tags:
     - tag: class
       value: network
@@ -1259,8 +1407,8 @@ zabbix_export:
     - macro: '{$FGATE.HTTP.PROXY}'
       description: HTTP proxy for API requests.
     - macro: '{$FGATE.SCHEME}'
-      value: http
-      description: Request scheme which may be http or https.
+      value: https
+      description: Request scheme for the FortiGate API. Use https for current FortiOS versions.
     valuemaps:
     - uuid: f78cb6da96ca4688afa2f2921853a70a
       name: Service state
@@ -1278,3 +1426,480 @@ zabbix_export:
         newvalue: up
       - value: '2'
         newvalue: unknown
+    dashboards:
+    - uuid: 04a595351be84a569d65fa3d630ca19e
+      name: 'FortiSwitch: General'
+      pages:
+      - name: Overview
+        widgets:
+        - type: item
+          x: '0'
+          y: '0'
+          width: '12'
+          hide_header: 'YES'
+          fields:
+          - type: STRING
+            name: bg_color
+            value: FFCA28
+          - type: STRING
+            name: description
+            value: API
+          - type: INTEGER
+            name: desc_bold
+            value: '1'
+          - type: STRING
+            name: desc_color
+            value: FFFFFF
+          - type: INTEGER
+            name: desc_v_pos
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.api.status
+          - type: INTEGER
+            name: show.0
+            value: '1'
+          - type: INTEGER
+            name: show.1
+            value: '2'
+          - type: STRING
+            name: thresholds.0.color
+            value: FF465C
+          - type: STRING
+            name: thresholds.0.threshold
+            value: '0'
+          - type: STRING
+            name: thresholds.1.color
+            value: 0EC9AC
+          - type: STRING
+            name: thresholds.1.threshold
+            value: '1'
+          - type: STRING
+            name: value_color
+            value: FFFFFF
+          - type: INTEGER
+            name: value_size
+            value: '35'
+        - type: item
+          x: '12'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.switch.count
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 1E88E5
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Managed switch count
+        - type: item
+          x: '24'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.switch.connected
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 0EC9AC
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Connected switches
+        - type: item
+          x: '36'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.switch.not_connected
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: FF465C
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Not connected switches
+        - type: item
+          x: '48'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.port.total
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 1E88E5
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Total ports
+        - type: item
+          x: '60'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.port.up
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 0EC9AC
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Ports up
+        - type: gauge
+          x: '0'
+          y: '2'
+          width: '24'
+          height: '4'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: STRING
+            name: description
+            value: '{ITEM.DESCRIPTION}'
+          - type: INTEGER
+            name: desc_size
+            value: '8'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.switch.connected_pct
+          - type: STRING
+            name: thresholds.0.color
+            value: FF465C
+          - type: STRING
+            name: thresholds.0.threshold
+            value: '0'
+          - type: STRING
+            name: thresholds.1.color
+            value: FFD54F
+          - type: STRING
+            name: thresholds.1.threshold
+            value: '70'
+          - type: STRING
+            name: thresholds.2.color
+            value: 0EC9AC
+          - type: STRING
+            name: thresholds.2.threshold
+            value: '90'
+          - type: INTEGER
+            name: th_show_arc
+            value: '1'
+          - type: INTEGER
+            name: th_show_labels
+            value: '1'
+          - type: STRING
+            name: units
+            value: '%'
+          - type: INTEGER
+            name: units_size
+            value: '15'
+          - type: INTEGER
+            name: value_size
+            value: '15'
+          name: Connected switch ratio
+        - type: gauge
+          x: '24'
+          y: '2'
+          width: '24'
+          height: '4'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: STRING
+            name: description
+            value: '{ITEM.DESCRIPTION}'
+          - type: INTEGER
+            name: desc_size
+            value: '8'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.port.up_pct
+          - type: STRING
+            name: thresholds.0.color
+            value: FF465C
+          - type: STRING
+            name: thresholds.0.threshold
+            value: '0'
+          - type: STRING
+            name: thresholds.1.color
+            value: FFD54F
+          - type: STRING
+            name: thresholds.1.threshold
+            value: '70'
+          - type: STRING
+            name: thresholds.2.color
+            value: 0EC9AC
+          - type: STRING
+            name: thresholds.2.threshold
+            value: '90'
+          - type: INTEGER
+            name: th_show_arc
+            value: '1'
+          - type: INTEGER
+            name: th_show_labels
+            value: '1'
+          - type: STRING
+            name: units
+            value: '%'
+          - type: INTEGER
+            name: units_size
+            value: '15'
+          - type: INTEGER
+            name: value_size
+            value: '15'
+          name: Ports up ratio
+        - type: item
+          x: '48'
+          y: '2'
+          width: '24'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              key: fgsw.port.down
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: FF465C
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Ports down
+        - type: graph
+          x: '0'
+          y: '6'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch: Managed switch state counts'
+          - type: STRING
+            name: reference
+            value: FSWG1
+        - type: graph
+          x: '36'
+          y: '6'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch: Port state counts'
+          - type: STRING
+            name: reference
+            value: FSWG2
+        - type: problems
+          x: '0'
+          y: '11'
+          width: '72'
+          height: '5'
+          fields:
+          - type: INTEGER
+            name: acknowledgement_status
+            value: '1'
+          - type: STRING
+            name: reference
+            value: FSWP1
+          - type: INTEGER
+            name: show
+            value: '3'
+          - type: INTEGER
+            name: show_opdata
+            value: '2'
+          - type: INTEGER
+            name: show_tags
+            value: '1'
+          - type: STRING
+            name: tag_priority
+            value: scope
+    - uuid: e9c7583383c54082a69867f33f7537a3
+      name: 'FortiSwitch: Statistics'
+      pages:
+      - name: Per-switch statistics
+        widgets:
+        - type: graphprototype
+          x: '0'
+          y: '0'
+          width: '36'
+          height: '7'
+          fields:
+          - type: INTEGER
+            name: columns
+            value: '1'
+          - type: GRAPH_PROTOTYPE
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch [{#SWNAME}]: Port states'
+          - type: STRING
+            name: reference
+            value: FSWC1
+        - type: graphprototype
+          x: '36'
+          y: '0'
+          width: '36'
+          height: '7'
+          fields:
+          - type: INTEGER
+            name: columns
+            value: '1'
+          - type: GRAPH_PROTOTYPE
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch [{#SWNAME}]: Runtime state'
+          - type: STRING
+            name: reference
+            value: FSWC2
+        - type: graph
+          x: '0'
+          y: '7'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch: Managed switch state counts'
+          - type: STRING
+            name: reference
+            value: FSWC3
+        - type: graph
+          x: '36'
+          y: '7'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiSwitch by FortiGate HTTP
+              name: 'FortiSwitch: Port state counts'
+          - type: STRING
+            name: reference
+            value: FSWC4
+  graphs:
+  - uuid: 95f19307d78848ea8ad3c2c7533cf305
+    name: 'FortiSwitch: Managed switch state counts'
+    graph_items:
+    - color: 1E88E5
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.switch.count
+    - sortorder: '1'
+      color: 199C0D
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.switch.connected
+    - sortorder: '2'
+      color: F63100
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.switch.not_connected
+  - uuid: 9bdb1dba3d1a4661a23416285f70c4bd
+    name: 'FortiSwitch: Port state counts'
+    graph_items:
+    - drawtype: GRADIENT_LINE
+      color: 1E88E5
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.port.total
+    - sortorder: '1'
+      drawtype: BOLD_LINE
+      color: 199C0D
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.port.up
+    - sortorder: '2'
+      drawtype: BOLD_LINE
+      color: F63100
+      item:
+        host: FortiSwitch by FortiGate HTTP
+        key: fgsw.port.down
