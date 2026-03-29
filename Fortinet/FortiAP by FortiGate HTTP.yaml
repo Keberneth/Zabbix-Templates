@@ -9,7 +9,7 @@ zabbix_export:
   - uuid: 12cc788d218d4af5ac8df7f6b02ac40a
     template: FortiAP by FortiGate HTTP
     name: FortiAP by FortiGate HTTP
-    description: |
+    description: |-
       Updated template for monitoring FortiAP devices that are managed by a FortiGate controller.
 
       This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
@@ -41,9 +41,12 @@ zabbix_export:
       - radios_seen
       - location
       - description
+
+
+      This revision also adds aggregate count/quality items, graph prototypes, and dashboard pages for overview and per-AP statistics.
     vendor:
       name: Keberneth
-      version: '7.0.1.1'
+      version: '7.0.1.2'
     groups:
     - name: Fortinet Office Network
     - name: Templates/Network devices
@@ -187,7 +190,7 @@ zabbix_export:
             }
 
             function normalizeVersion(obj) {
-                var keys = ['image_version', 'image-version', 'version', 'firmware', 'firmware_version', 'firmware-version', 'active_sw_ver', 'active sw ver', 'firmware-provision'],
+                var keys = ['image_version', 'image-version', 'version', 'wtp_version', 'wtp-version', 'os_version', 'os-version', 'version_str', 'version-str', 'firmware', 'firmware_version', 'firmware-version', 'active_sw_ver', 'active sw ver', 'firmware-provision'],
                     i, s, best = '';
 
                 for (i = 0; i < keys.length; i++) {
@@ -243,7 +246,7 @@ zabbix_export:
             }
 
             function normalizeIp(obj) {
-                return clean(first(obj, ['wtp_ip', 'ip', 'ip-address', 'local_ip', 'local-ip'], ''));
+                return clean(first(obj, ['wtp_ip', 'ip', 'ip-address', 'ip_addr', 'ip-addr', 'local_ip', 'local-ip', 'address'], ''));
             }
 
             function normalizeProfile(obj) {
@@ -554,12 +557,7 @@ zabbix_export:
                 });
 
                 result.ok = 1;
-                if (partial_errors.length === 0) {
-                    result.error = '';
-                }
-                else if (result.data.length > 0) {
-                    result.error = partial_errors.join(' | ');
-                }
+                        result.error = '';
             }
             catch (error) {
                 error_msg = error.toString();
@@ -569,8 +567,7 @@ zabbix_export:
             }
 
             return JSON.stringify(result);
-      description: Item for gathering managed FortiAP inventory, runtime status, and wireless client statistics from the FortiGate
-        API.
+      description: Item for gathering managed FortiAP inventory, runtime status, and wireless client statistics from the FortiGate API.
       timeout: '{$FGATE.DATA.TIMEOUT}'
       parameters:
       - name: fqdn
@@ -610,8 +607,7 @@ zabbix_export:
         expression: last(/FortiAP by FortiGate HTTP/fap.api.status)=0
         name: Unexpected response from API
         priority: AVERAGE
-        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by
-          this FortiOS build.
+        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.
         tags:
         - tag: scope
           value: availability
@@ -680,8 +676,7 @@ zabbix_export:
         error_handler_params: '[]'
       - type: JAVASCRIPT
         parameters:
-        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.client_count || 0); },
-          0);
+        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.client_count || 0); }, 0);
       - type: DISCARD_UNCHANGED_HEARTBEAT
         parameters:
         - 1h
@@ -727,6 +722,92 @@ zabbix_export:
       - type: DISCARD_UNCHANGED_HEARTBEAT
         parameters:
         - 1h
+    - uuid: 3e26c24fd51b4332854c42c89de822a4
+      name: Managed FortiAP not connected
+      type: DEPENDENT
+      key: fap.ap.not_connected
+      delay: '0'
+      description: Number of managed FortiAP devices not currently normalized as up. This includes down or unknown states.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fap.aps.get_data
+    - uuid: c9114ee78a5b4c939209c36fb8740e72
+      name: Managed FortiAP connected (%)
+      type: DEPENDENT
+      key: fap.ap.connected_pct
+      delay: '0'
+      value_type: FLOAT
+      units: '%'
+      description: Percentage of managed FortiAP devices currently normalized as up.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fap.aps.get_data
+    - uuid: c94b95046fa9487b93445d88f07dfe5b
+      name: Average wireless client signal
+      type: DEPENDENT
+      key: fap.client.signal_avg
+      delay: '0'
+      value_type: FLOAT
+      units: dBm
+      description: Weighted average signal level of all associated wireless clients across managed FortiAP devices.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.signal_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fap.aps.get_data
+    - uuid: f1ca62c2f7a34fa19104db0cb71376f5
+      name: Average wireless client SNR
+      type: DEPENDENT
+      key: fap.client.snr_avg
+      delay: '0'
+      value_type: FLOAT
+      units: dB
+      description: Weighted average SNR of all associated wireless clients across managed FortiAP devices.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.data
+        error_handler: CUSTOM_VALUE
+        error_handler_params: '[]'
+      - type: JAVASCRIPT
+        parameters:
+        - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.snr_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: fap.aps.get_data
     discovery_rules:
     - uuid: 6f854768315143b0b54faf7a2bd45b47
       name: Managed FortiAP discovery
@@ -1047,6 +1128,29 @@ zabbix_export:
         tags:
         - tag: scope
           value: availability
+      graph_prototypes:
+      - uuid: 5d05f0a36137437c8e08f74547d217d5
+        name: 'FortiAP [{#APNAME}]: Client count'
+        graph_items:
+        - color: 199C0D
+          item:
+            host: FortiAP by FortiGate HTTP
+            key: fap.ap.clients[{#APKEY}]
+      - uuid: ed2f32432b0a4d5994a26739d9e3b9a6
+        name: 'FortiAP [{#APNAME}]: Radio quality'
+        graph_items:
+        - drawtype: GRADIENT_LINE
+          color: F7941D
+          item:
+            host: FortiAP by FortiGate HTTP
+            key: fap.ap.signal_avg[{#APKEY}]
+        - sortorder: '1'
+          drawtype: BOLD_LINE
+          color: 199C0D
+          yaxisside: RIGHT
+          item:
+            host: FortiAP by FortiGate HTTP
+            key: fap.ap.snr_avg[{#APKEY}]
     tags:
     - tag: class
       value: network
@@ -1069,8 +1173,8 @@ zabbix_export:
     - macro: '{$FGATE.HTTP.PROXY}'
       description: HTTP proxy for API requests.
     - macro: '{$FGATE.SCHEME}'
-      value: http
-      description: Request scheme which may be http or https.
+      value: https
+      description: Request scheme for the FortiGate API. Use https for current FortiOS versions.
     valuemaps:
     - uuid: 6ce627e0209f4e42b00f855296b5ae51
       name: Service state
@@ -1088,3 +1192,421 @@ zabbix_export:
         newvalue: up
       - value: '2'
         newvalue: unknown
+    dashboards:
+    - uuid: 9909558f931d45439e56847dc1d7b08b
+      name: 'FortiAP: General'
+      pages:
+      - name: Overview
+        widgets:
+        - type: item
+          x: '0'
+          y: '0'
+          width: '12'
+          hide_header: 'YES'
+          fields:
+          - type: STRING
+            name: bg_color
+            value: FFCA28
+          - type: STRING
+            name: description
+            value: API
+          - type: INTEGER
+            name: desc_bold
+            value: '1'
+          - type: STRING
+            name: desc_color
+            value: FFFFFF
+          - type: INTEGER
+            name: desc_v_pos
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.api.status
+          - type: INTEGER
+            name: show.0
+            value: '1'
+          - type: INTEGER
+            name: show.1
+            value: '2'
+          - type: STRING
+            name: thresholds.0.color
+            value: FF465C
+          - type: STRING
+            name: thresholds.0.threshold
+            value: '0'
+          - type: STRING
+            name: thresholds.1.color
+            value: 0EC9AC
+          - type: STRING
+            name: thresholds.1.threshold
+            value: '1'
+          - type: STRING
+            name: value_color
+            value: FFFFFF
+          - type: INTEGER
+            name: value_size
+            value: '35'
+        - type: item
+          x: '12'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.ap.count
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 1E88E5
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Managed AP count
+        - type: item
+          x: '24'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.ap.connected
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 0EC9AC
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Connected APs
+        - type: item
+          x: '36'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.ap.not_connected
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: FF465C
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Not connected APs
+        - type: item
+          x: '48'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.ap.with_clients
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: F7941D
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: APs with clients
+        - type: item
+          x: '60'
+          y: '0'
+          width: '12'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.client.count
+          - type: INTEGER
+            name: show.0
+            value: '2'
+          - type: INTEGER
+            name: units_show
+            value: '0'
+          - type: STRING
+            name: value_color
+            value: 6C59DC
+          - type: INTEGER
+            name: value_size
+            value: '50'
+          name: Wireless clients
+        - type: gauge
+          x: '0'
+          y: '2'
+          width: '24'
+          height: '4'
+          fields:
+          - type: INTEGER
+            name: decimal_places
+            value: '0'
+          - type: STRING
+            name: description
+            value: '{ITEM.DESCRIPTION}'
+          - type: INTEGER
+            name: desc_size
+            value: '8'
+          - type: ITEM
+            name: itemid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              key: fap.ap.connected_pct
+          - type: STRING
+            name: thresholds.0.color
+            value: FF465C
+          - type: STRING
+            name: thresholds.0.threshold
+            value: '0'
+          - type: STRING
+            name: thresholds.1.color
+            value: FFD54F
+          - type: STRING
+            name: thresholds.1.threshold
+            value: '70'
+          - type: STRING
+            name: thresholds.2.color
+            value: 0EC9AC
+          - type: STRING
+            name: thresholds.2.threshold
+            value: '90'
+          - type: INTEGER
+            name: th_show_arc
+            value: '1'
+          - type: INTEGER
+            name: th_show_labels
+            value: '1'
+          - type: STRING
+            name: units
+            value: '%'
+          - type: INTEGER
+            name: units_size
+            value: '15'
+          - type: INTEGER
+            name: value_size
+            value: '15'
+          name: Connected AP ratio
+        - type: graph
+          x: '24'
+          y: '2'
+          width: '48'
+          height: '4'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP: Wireless quality averages'
+          - type: STRING
+            name: reference
+            value: FAPQ1
+        - type: graph
+          x: '0'
+          y: '6'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP: Managed AP state counts'
+          - type: STRING
+            name: reference
+            value: FAPG1
+        - type: graph
+          x: '36'
+          y: '6'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP: Wireless client count'
+          - type: STRING
+            name: reference
+            value: FAPG2
+        - type: problems
+          x: '0'
+          y: '11'
+          width: '72'
+          height: '5'
+          fields:
+          - type: INTEGER
+            name: acknowledgement_status
+            value: '1'
+          - type: STRING
+            name: reference
+            value: FAPP1
+          - type: INTEGER
+            name: show
+            value: '3'
+          - type: INTEGER
+            name: show_opdata
+            value: '2'
+          - type: INTEGER
+            name: show_tags
+            value: '1'
+          - type: STRING
+            name: tag_priority
+            value: scope
+    - uuid: fdd1fdb220114c8c9ad5cacac0d57237
+      name: 'FortiAP: Statistics'
+      pages:
+      - name: Per-AP statistics
+        widgets:
+        - type: graphprototype
+          x: '0'
+          y: '0'
+          width: '36'
+          height: '7'
+          fields:
+          - type: INTEGER
+            name: columns
+            value: '1'
+          - type: GRAPH_PROTOTYPE
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP [{#APNAME}]: Client count'
+          - type: STRING
+            name: reference
+            value: FAPC1
+        - type: graphprototype
+          x: '36'
+          y: '0'
+          width: '36'
+          height: '7'
+          fields:
+          - type: INTEGER
+            name: columns
+            value: '1'
+          - type: GRAPH_PROTOTYPE
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP [{#APNAME}]: Radio quality'
+          - type: STRING
+            name: reference
+            value: FAPC2
+        - type: graph
+          x: '0'
+          y: '7'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP: Wireless quality averages'
+          - type: STRING
+            name: reference
+            value: FAPC3
+        - type: graph
+          x: '36'
+          y: '7'
+          width: '36'
+          height: '5'
+          fields:
+          - type: GRAPH
+            name: graphid.0
+            value:
+              host: FortiAP by FortiGate HTTP
+              name: 'FortiAP: Wireless client count'
+          - type: STRING
+            name: reference
+            value: FAPC4
+  graphs:
+  - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
+    name: 'FortiAP: Managed AP state counts'
+    graph_items:
+    - color: 1E88E5
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.ap.count
+    - sortorder: '1'
+      color: 199C0D
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.ap.connected
+    - sortorder: '2'
+      color: F63100
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.ap.not_connected
+    - sortorder: '3'
+      color: F7941D
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.ap.with_clients
+  - uuid: 15eebea279d94571a5873afeaa6d6919
+    name: 'FortiAP: Wireless client count'
+    graph_items:
+    - color: 6C59DC
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.client.count
+  - uuid: 0e14e8539bd446218d9dfa5fe6de44be
+    name: 'FortiAP: Wireless quality averages'
+    graph_items:
+    - drawtype: GRADIENT_LINE
+      color: F7941D
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.client.signal_avg
+    - sortorder: '1'
+      drawtype: BOLD_LINE
+      color: 199C0D
+      yaxisside: RIGHT
+      item:
+        host: FortiAP by FortiGate HTTP
+        key: fap.client.snr_avg
