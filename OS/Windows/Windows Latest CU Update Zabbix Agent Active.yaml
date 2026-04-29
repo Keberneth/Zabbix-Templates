@@ -1,0 +1,36 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    - uuid: f701c6ba6fe846bc9c6ab70718a9730a
+      template: 'Windows Latest CU Update Zabbix Agent Active'
+      name: 'Windows Latest CU Update Zabbix Agent Active'
+      description: |
+        Zabbix plugin needed for this template. 
+        https://github.com/Keberneth/Zabbix-Plugins/tree/main/Windows/WindowsLatestUpdate
+      vendor:
+        name: Keberneth
+        version: 7.0.0
+      groups:
+        - name: Templates
+      items:
+        - uuid: 1ed3eb2fa41b43679d95f801cc738e26
+          name: 'Windows Latest CU Installed'
+          type: ZABBIX_ACTIVE
+          key: wlu.update.installed
+          delay: 1d
+          triggers:
+            - uuid: 381a02edc58f4c6b9a758a12f5fdb354
+              expression: 'last(/Windows Latest CU Update Zabbix Agent Active/wlu.update.installed)<>0'
+              name: 'Current month CU missing on {HOST.NAME}'
+              priority: INFO
+        - uuid: 519607d22745428d97a1feec63848d48
+          name: 'Windows Latest CU Status'
+          type: ZABBIX_ACTIVE
+          key: wlu.update.status
+          delay: 1d
+          history: 10d
+          value_type: TEXT
+          trends: '0'
