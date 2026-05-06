@@ -1,1905 +1,2635 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-  - uuid: df97989912ff40919985d25706920120
-    name: Fortinet Office Network
-  - uuid: 41d23565286045a6855bdf9b7c52dc87
-    name: Templates/Network devices
+    - uuid: df97989912ff40919985d25706920120
+      name: 'Fortinet Office Network'
+    - uuid: 41d23565286045a6855bdf9b7c52dc87
+      name: 'Templates/Network devices'
   templates:
-  - uuid: 3dfc5ac9a74e4269bf29ab7783a33cbc
-    template: FortiSwitch by FortiGate HTTP
-    name: FortiSwitch by FortiGate HTTP
-    description: |-
-      Updated template for monitoring FortiSwitch devices that are managed by a FortiGate controller.
-
-      This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
-      It reuses the same controller-side macros:
-      - {$FGATE.API.FQDN}
-      - {$FGATE.API.PORT}
-      - {$FGATE.API.TOKEN}
-      - {$FGATE.SCHEME}
-      - {$FGATE.DATA.TIMEOUT}
-      - {$FGATE.HTTP.PROXY}
-
-      This revision prefers the newer FortiGate monitor endpoint for managed switch runtime status and augments it with:
-      - CMDB managed-switch data for configured values such as profile and description
-      - switch-group membership for the GUI "Switch Group" column
-
-      Normalized per-switch fields returned by the master item:
-      - serial
-      - name
-      - model
-      - ip
-      - version
-      - profile
-      - switch_group
-      - admin_state
-      - connection_state
-      - state_raw
-      - state_num
-      - flags
-      - join_time
-      - port_total
-      - port_up
-      - port_down
-      - description
-
-
-      This revision also adds aggregate switch/port items, graph prototypes, and dashboard pages for overview and per-switch statistics.
-    vendor:
-      name: Keberneth
-      version: '7.0.1.2'
-    groups:
-    - name: Fortinet Office Network
-    - name: Templates/Network devices
-    items:
-    - uuid: 6836c66e19374f409498055fca40a172
-      name: Get managed FortiSwitch data
-      type: SCRIPT
-      key: fgsw.switches.get_data
-      delay: 5m
-      history: '0'
-      value_type: TEXT
-      trends: '0'
-      params: |2
-            var params = JSON.parse(value),
-                request = new HttpRequest(),
-                result = {"ok": 0, "data": [], "error": ""},
-                api_url = "",
-                error_msg = "";
-
-            function isObject(v) {
-                return typeof v === 'object' && v !== null && !Array.isArray(v);
-            }
-
-            function safeText(v) {
-                return (typeof v === 'undefined' || v === null) ? '' : String(v);
-            }
-
-            function first(obj, keys, def) {
-                var i, key;
-                if (!isObject(obj)) {
+    - uuid: 3dfc5ac9a74e4269bf29ab7783a33cbc
+      template: 'FortiSwitch by FortiGate HTTP'
+      name: 'FortiSwitch by FortiGate HTTP'
+      description: |
+        Updated template for monitoring FortiSwitch devices that are managed by a FortiGate controller.
+        
+        This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
+        It reuses the same controller-side macros:
+        - {$FGATE.API.FQDN}
+        - {$FGATE.API.PORT}
+        - {$FGATE.API.TOKEN}
+        - {$FGATE.SCHEME}
+        - {$FGATE.DATA.TIMEOUT}
+        - {$FGATE.HTTP.PROXY}
+        
+        This revision prefers the newer FortiGate monitor endpoint for managed switch runtime status and augments it with:
+        - CMDB managed-switch data for configured values such as profile and description
+        - switch-group membership for the GUI "Switch Group" column
+        
+        Normalized per-switch fields returned by the master item:
+        - serial
+        - name
+        - model
+        - ip
+        - version
+        - profile
+        - switch_group
+        - admin_state
+        - connection_state
+        - state_raw
+        - state_num
+        - flags
+        - join_time
+        - port_total
+        - port_up
+        - port_down
+        - description
+        
+        
+        This revision also adds aggregate switch/port items, graph prototypes, and dashboard pages for overview and per-switch statistics.
+      vendor:
+        name: Keberneth
+        version: 7.0.3
+      groups:
+        - name: 'Fortinet Office Network'
+        - name: 'Templates/Network devices'
+      items:
+        - uuid: 99a54308bc814097b4b167bf283f6e37
+          name: 'API availability status'
+          type: DEPENDENT
+          key: fgsw.api.status
+          delay: '0'
+          description: 'Checking API availability by normalized response.'
+          valuemap:
+            name: 'Service state'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ok
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: fgsw.switches.get_data
+          tags:
+            - tag: component
+              value: health
+          triggers:
+            - uuid: 947d83249fab46dd95576c8cf3b2181a
+              expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0'
+              name: 'Unexpected response from API'
+              priority: AVERAGE
+              description: 'Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: f0478d1d9a094b9fba9cff9b6fb593ac
+          name: 'Master metric item errors'
+          type: DEPENDENT
+          key: fgsw.data_errors
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Item for gathering errors of the master metric.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: CUSTOM_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+          tags:
+            - tag: component
+              value: error
+          triggers:
+            - uuid: 8802c2c28e284bdea3079d6b665da904
+              expression: 'length(last(/FortiSwitch by FortiGate HTTP/fgsw.data_errors))>0'
+              name: 'There are errors in the master metric'
+              priority: WARNING
+              dependencies:
+                - name: 'Unexpected response from API'
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 01603ddf56324a5996e84eac50bb7374
+          name: 'FortiSwitch ports down'
+          type: DEPENDENT
+          key: fgsw.port.down
+          delay: '0'
+          description: 'Total number of managed FortiSwitch ports currently reported down by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_down || 0); }, 0);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 45ad96d698a644e3879c97281b353781
+          name: 'Total FortiSwitch ports'
+          type: DEPENDENT
+          key: fgsw.port.total
+          delay: '0'
+          description: 'Total number of switch ports across all managed FortiSwitch devices returned by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_total || 0); }, 0);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 7969ff1e444b404b84891d1e37a1a46d
+          name: 'FortiSwitch ports up'
+          type: DEPENDENT
+          key: fgsw.port.up
+          delay: '0'
+          description: 'Total number of managed FortiSwitch ports currently reported up by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_up || 0); }, 0);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 31edfefa2bf14a758f09740e49a4724c
+          name: 'FortiSwitch ports up (%)'
+          type: DEPENDENT
+          key: fgsw.port.up_pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Percentage of managed FortiSwitch ports currently reported up by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value), total = 0, up = 0; data.forEach(function (v) { total += Number(v.port_total || 0); up += Number(v.port_up || 0); }); return total > 0 ? (up * 100 / total).toFixed(2) : 0;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 42de5962c0bc4c3aa2527223c69927a9
+          name: 'Managed FortiSwitch connected'
+          type: DEPENDENT
+          key: fgsw.switch.connected
+          delay: '0'
+          description: 'Number of managed FortiSwitch devices with a normalized state of up.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: d90bdef8afda45798f55e5654e57c9b1
+          name: 'Managed FortiSwitch connected (%)'
+          type: DEPENDENT
+          key: fgsw.switch.connected_pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Percentage of managed FortiSwitch devices currently normalized as up.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 36115d0b14314cb59292110a2a09da9c
+          name: 'Managed FortiSwitch count'
+          type: DEPENDENT
+          key: fgsw.switch.count
+          delay: '0'
+          description: 'Number of FortiSwitch devices returned by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data.length()
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: da3837db88364736a573c9440698722e
+          name: 'Managed FortiSwitch not connected'
+          type: DEPENDENT
+          key: fgsw.switch.not_connected
+          delay: '0'
+          description: 'Number of managed FortiSwitch devices not currently normalized as up. This includes down or unknown states.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgsw.switches.get_data
+        - uuid: 6836c66e19374f409498055fca40a172
+          name: 'Get managed FortiSwitch data'
+          type: SCRIPT
+          key: fgsw.switches.get_data
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |2
+                var params = JSON.parse(value),
+                    request = new HttpRequest(),
+                    result = {"ok": 0, "data": [], "error": ""},
+                    api_url = "",
+                    error_msg = "";
+            
+                function isObject(v) {
+                    return typeof v === 'object' && v !== null && !Array.isArray(v);
+                }
+            
+                function safeText(v) {
+                    return (typeof v === 'undefined' || v === null) ? '' : String(v);
+                }
+            
+                function first(obj, keys, def) {
+                    var i, key;
+                    if (!isObject(obj)) {
+                        return def;
+                    }
+                    for (i = 0; i < keys.length; i++) {
+                        key = keys[i];
+                        if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
+                            return obj[key];
+                        }
+                    }
                     return def;
                 }
-                for (i = 0; i < keys.length; i++) {
-                    key = keys[i];
-                    if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
-                        return obj[key];
+            
+                function arrify(response) {
+                    var cands = ['results', 'result', 'data', 'entries'],
+                        i, r, out;
+            
+                    if (Array.isArray(response)) {
+                        return response;
                     }
-                }
-                return def;
-            }
-
-            function arrify(response) {
-                var cands = ['results', 'result', 'data', 'entries'],
-                    i, r, out;
-
-                if (Array.isArray(response)) {
-                    return response;
-                }
-
-                if (!isObject(response)) {
+            
+                    if (!isObject(response)) {
+                        return [];
+                    }
+            
+                    for (i = 0; i < cands.length; i++) {
+                        r = response[cands[i]];
+                        if (Array.isArray(r)) {
+                            return r;
+                        }
+                        if (isObject(r)) {
+                            out = [];
+                            Object.keys(r).forEach(function (k) {
+                                var item = r[k];
+                                if (!isObject(item)) {
+                                    item = {"value": item};
+                                }
+                                if (typeof item.__key === 'undefined') {
+                                    item.__key = k;
+                                }
+                                out.push(item);
+                            });
+                            return out;
+                        }
+                    }
+            
                     return [];
                 }
-
-                for (i = 0; i < cands.length; i++) {
-                    r = response[cands[i]];
-                    if (Array.isArray(r)) {
-                        return r;
+            
+                function getHttpData(url) {
+                    var response;
+            
+                    response = request.get(url);
+                    Zabbix.log(4, '[ FortiSwitch by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            
+                    if (request.getStatus() !== 200) {
+                        throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
                     }
-                    if (isObject(r)) {
+            
+                    if (response !== null && response !== '') {
+                        try {
+                            response = JSON.parse(response);
+                        }
+                        catch (error) {
+                            throw 'Failed to parse response received from FortiGate API.';
+                        }
+                    }
+            
+                    if (!isObject(response) && !Array.isArray(response)) {
+                        throw 'Cannot process response data: received data is not an object.';
+                    }
+            
+                    return response;
+                }
+            
+                function queryUrls(urls) {
+                    var i, last_error = '';
+                    for (i = 0; i < urls.length; i++) {
+                        try {
+                            return getHttpData(urls[i]);
+                        }
+                        catch (error) {
+                            last_error = error.toString();
+                        }
+                    }
+                    throw last_error;
+                }
+            
+                function clean(v) {
+                    return safeText(v).replace(/^\s+|\s+$/g, '');
+                }
+            
+                function isMeaningfulString(s) {
+                    return s !== '' && !/^(?:0|1|true|false|null|n\/a)$/i.test(s);
+                }
+            
+                function likelyVersion(s) {
+                    return /(?:^|[\s-])v?\d+\.\d+(?:\.\d+)?(?:\s*\(\d+\))?/i.test(s) ||
+                           /\bbuild\b/i.test(s) ||
+                           /\bGA\b/i.test(s) ||
+                           /-v\d+\.\d+\.\d+/i.test(s);
+                }
+            
+                function likelyModel(s) {
+                    return /(fortiswitch|^s\d{3,4}[a-z0-9-]+)/i.test(s);
+                }
+            
+                function normalizeName(obj) {
+                    var serial = clean(first(obj, ['serial', 'sn', 'q_origin_key', 'id'], '')),
+                        keys = ['switch_id', 'switch-id', 'name', 'switch_name', 'switch-name', 'hostname'],
+                        i, s;
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s) && s !== serial) {
+                            return s;
+                        }
+                    }
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s)) {
+                            return s;
+                        }
+                    }
+            
+                    return serial;
+                }
+            
+                function deriveSwitchModelFromSerialOrVersion(serial, version) {
+                    var s = clean(serial),
+                        v = clean(version),
+                        m = s.match(/^S(\d+)([A-Z])([A-Z])/i),
+                        img = v.match(/^([A-Z]\d+[A-Z]+)/i),
+                        prefix = '',
+                        family = '',
+                        variant = '';
+            
+                    if (m) {
+                        prefix = m[1];
+                        family = m[2];
+                        variant = m[3];
+                        if (/^[A-Z]$/.test(family)) {
+                            if (variant === 'P') {
+                                return 'FortiSwitch ' + prefix + family + '-POE';
+                            }
+                            if (variant === 'N') {
+                                return 'FortiSwitch ' + prefix + family;
+                            }
+                        }
+                    }
+            
+                    if (img) {
+                        return img[1];
+                    }
+            
+                    return '';
+                }
+            
+                function normalizeVersion(obj) {
+                    var keys = ['image_version', 'image-version', 'version', 'os_version', 'os-version', 'os_ver', 'firmware_version', 'firmware-version', 'firmware', 'image'],
+                        i, s, best = '';
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (!isMeaningfulString(s)) {
+                            continue;
+                        }
+                        if (likelyVersion(s)) {
+                            return s;
+                        }
+                        if (best === '' && /[A-Za-z]/.test(s)) {
+                            best = s;
+                        }
+                    }
+            
+                    return best;
+                }
+            
+                function normalizeModel(obj, serial, version) {
+                    var keys = ['model_name', 'model-name', 'model', 'platform_str', 'platform-str', 'platform', 'product'],
+                        i, s;
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s) && likelyModel(s)) {
+                            return s;
+                        }
+                    }
+            
+                    return deriveSwitchModelFromSerialOrVersion(serial, version);
+                }
+            
+                function switchAliases(v) {
+                    var serial = clean(first(v, ['serial', 'sn', 'q_origin_key', '__key', 'id'], '')),
+                        name = clean(normalizeName(v)),
+                        swid = clean(first(v, ['switch_id', 'switch-id'], ''));
+            
+                    return [serial, name, swid].filter(function (x, idx, arr) {
+                        return x !== '' && arr.indexOf(x) === idx;
+                    });
+                }
+            
+                function parseStatusParts(obj) {
+                    var admin = clean(first(obj, ['admin_status', 'admin-status', 'admin_state', 'admin-state', 'authorization', 'admin'], '')),
+                        conn = clean(first(obj, ['connection_state', 'connection-state', 'connection', 'run_state', 'run-state', 'oper_state', 'oper-state', 'fortilink_status', 'fortilink-status', 'conn_status', 'conn-status', 'link'], '')),
+                        combined = clean(first(obj, ['status', 'state'], '')),
+                        raw = '',
+                        parts, num = 2;
+            
+                    if (combined !== '' && combined.indexOf('/') !== -1) {
+                        parts = combined.split('/');
+                        if (admin === '') {
+                            admin = clean(parts[0]);
+                        }
+                        if (conn === '') {
+                            conn = clean(parts.slice(1).join('/'));
+                        }
+                        raw = combined;
+                    }
+                    else if (combined !== '') {
+                        if (conn === '' && /(up|down|connected|disconnected|online|offline|healthy|lost|dead|missing)/i.test(combined)) {
+                            conn = combined;
+                        }
+                        else if (admin === '' && /(authorized|unauthorized|discovered|disabled|enable|disable)/i.test(combined)) {
+                            admin = combined;
+                        }
+                        raw = combined;
+                    }
+            
+                    if (raw === '') {
+                        if (admin !== '' && conn !== '') {
+                            raw = admin + '/' + conn;
+                        }
+                        else {
+                            raw = conn !== '' ? conn : admin;
+                        }
+                    }
+            
+                    if (/(authorized\/up|connected\s*\(|\bconnected\b|\bonline\b|\bhealthy\b|\bup\b)/i.test(raw) || /(connected|up|online|healthy)/i.test(conn)) {
+                        num = 1;
+                    }
+                    else if (/(discovered\/down|unauthorized|disconnected|offline|lost|dead|missing|\bdown\b)/i.test(raw) || /(disconnected|offline|down|lost|dead|missing)/i.test(conn)) {
+                        num = 0;
+                    }
+                    else if (clean(first(obj, ['address', 'ip', 'ip-address', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], '')) !== '' &&
+                             normalizeVersion(obj) !== '' &&
+                             !/^N\/A$/i.test(normalizeVersion(obj))) {
+                        num = 1;
+                    }
+                    else if (/^N\/A$/i.test(normalizeVersion(obj))) {
+                        num = 0;
+                    }
+            
+                    if (raw === '') {
+                        raw = num === 1 ? 'up' : (num === 0 ? 'down' : 'unknown');
+                    }
+            
+                    return {"raw": raw, "num": num, "admin": admin, "conn": conn};
+                }
+            
+                function normalizeIp(obj) {
+                    return clean(first(obj, ['address', 'ip', 'ip-address', 'connecting_from', 'connecting-from', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], ''));
+                }
+            
+                function normalizeProfile(obj) {
+                    return clean(first(obj, ['switch_profile', 'switch-profile', 'profile', 'switch-profile-name'], ''));
+                }
+            
+                function normalizeJoinTime(obj) {
+                    return clean(first(obj, ['join_time', 'join-time', 'join time'], ''));
+                }
+            
+                function normalizeFlags(obj) {
+                    return clean(first(obj, ['flag', 'flags'], ''));
+                }
+            
+                function extractPortSummary(obj) {
+                    var out = {"total": 0, "up": 0, "down": 0},
+                        explicit = Number(first(obj, ['port_total', 'ports_total', 'port_count', 'ports_count', 'max_ports'], NaN)),
+                        candidates = [
+                            first(obj, ['ports'], null),
+                            first(obj, ['interfaces'], null),
+                            first(obj, ['port_stats'], null),
+                            first(obj, ['port-stats'], null)
+                        ],
+                        i, c, keys, j, p, link;
+            
+                    if (!isNaN(explicit)) {
+                        out.total = Math.floor(explicit);
+                    }
+            
+                    for (i = 0; i < candidates.length; i++) {
+                        c = candidates[i];
+                        if (Array.isArray(c)) {
+                            if (out.total === 0) {
+                                out.total = c.length;
+                            }
+                            for (j = 0; j < c.length; j++) {
+                                p = c[j];
+                                if (!isObject(p)) {
+                                    continue;
+                                }
+                                link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
+                                if (link === 'up' || link === 'connected') {
+                                    out.up += 1;
+                                }
+                                else if (link === 'down' || link === 'disconnected') {
+                                    out.down += 1;
+                                }
+                            }
+                            return out;
+                        }
+                        if (isObject(c)) {
+                            keys = Object.keys(c);
+                            if (out.total === 0) {
+                                out.total = keys.length;
+                            }
+                            for (j = 0; j < keys.length; j++) {
+                                p = c[keys[j]];
+                                if (!isObject(p)) {
+                                    continue;
+                                }
+                                link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
+                                if (link === 'up' || link === 'connected') {
+                                    out.up += 1;
+                                }
+                                else if (link === 'down' || link === 'disconnected') {
+                                    out.down += 1;
+                                }
+                            }
+                            return out;
+                        }
+                    }
+            
+                    return out;
+                }
+            
+                function memberIds(group_item) {
+                    var m = first(group_item, ['members'], []),
                         out = [];
-                        Object.keys(r).forEach(function (k) {
-                            var item = r[k];
-                            if (!isObject(item)) {
-                                item = {"value": item};
+            
+                    function pushMember(v) {
+                        var s = clean(v);
+                        if (s !== '' && out.indexOf(s) === -1) {
+                            out.push(s);
+                        }
+                    }
+            
+                    if (Array.isArray(m)) {
+                        m.forEach(function (x) {
+                            if (typeof x === 'string' || typeof x === 'number') {
+                                pushMember(x);
                             }
-                            if (typeof item.__key === 'undefined') {
-                                item.__key = k;
+                            else if (isObject(x)) {
+                                pushMember(first(x, ['switch_id', 'switch-id', 'name', 'q_origin_key', 'serial'], ''));
                             }
-                            out.push(item);
                         });
-                        return out;
                     }
+                    else if (typeof m === 'string') {
+                        m.split(/\s*,\s*/).forEach(pushMember);
+                    }
+            
+                    return out;
                 }
-
-                return [];
-            }
-
-            function getHttpData(url) {
-                var response;
-
-                response = request.get(url);
-                Zabbix.log(4, '[ FortiSwitch by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
-
-                if (request.getStatus() !== 200) {
-                    throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
-                }
-
-                if (response !== null && response !== '') {
+            
+                try {
+                    ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+                        var macro = '{$FGATE.' + field.toUpperCase() + '}';
+                        var key = field.split('.').pop();
+            
+                        if (typeof params[key] === 'undefined') {
+                            throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+                        }
+            
+                        if (params[key] === macro || params[key] === '') {
+                            throw 'Please change ' + macro + ' macro to the proper value.';
+                        }
+                    });
+            
+                    if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+                        request.setProxy(params.http_proxy);
+                    }
+            
+                    api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+            
+                    var status_resp = null,
+                        legacy_monitor_resp = null,
+                        cmdb_resp = null,
+                        group_resp = null,
+                        health_resp = null,
+                        port_stats_resp = null,
+                        devices = {},
+                        alias_to_key = {},
+                        groups_by_alias = {},
+                        partial_errors = [];
+            
                     try {
-                        response = JSON.parse(response);
+                        status_resp = queryUrls([
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&count=1000'
+                        ]);
                     }
                     catch (error) {
-                        throw 'Failed to parse response received from FortiGate API.';
+                        partial_errors.push('status endpoint failed: ' + error);
                     }
-                }
-
-                if (!isObject(response) && !Array.isArray(response)) {
-                    throw 'Cannot process response data: received data is not an object.';
-                }
-
-                return response;
-            }
-
-            function queryUrls(urls) {
-                var i, last_error = '';
-                for (i = 0; i < urls.length; i++) {
+            
                     try {
-                        return getHttpData(urls[i]);
+                        legacy_monitor_resp = queryUrls([
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000&poe=true&port_stats=true&transceiver=true',
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
+                        ]);
                     }
                     catch (error) {
-                        last_error = error.toString();
+                        partial_errors.push('legacy monitor endpoint failed: ' + error);
                     }
-                }
-                throw last_error;
-            }
-
-            function clean(v) {
-                return safeText(v).replace(/^\s+|\s+$/g, '');
-            }
-
-            function isMeaningfulString(s) {
-                return s !== '' && !/^(?:0|1|true|false|null|n\/a)$/i.test(s);
-            }
-
-            function likelyVersion(s) {
-                return /(?:^|[\s-])v?\d+\.\d+(?:\.\d+)?(?:\s*\(\d+\))?/i.test(s) ||
-                       /\bbuild\b/i.test(s) ||
-                       /\bGA\b/i.test(s) ||
-                       /-v\d+\.\d+\.\d+/i.test(s);
-            }
-
-            function likelyModel(s) {
-                return /(fortiswitch|^s\d{3,4}[a-z0-9-]+)/i.test(s);
-            }
-
-            function normalizeName(obj) {
-                var serial = clean(first(obj, ['serial', 'sn', 'q_origin_key', 'id'], '')),
-                    keys = ['switch_id', 'switch-id', 'name', 'switch_name', 'switch-name', 'hostname'],
-                    i, s;
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s) && s !== serial) {
-                        return s;
+            
+                    try {
+                        cmdb_resp = getHttpData(
+                            api_url + '/api/v2/cmdb/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
+                        );
                     }
-                }
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s)) {
-                        return s;
+                    catch (error) {
+                        partial_errors.push('cmdb managed-switch endpoint failed: ' + error);
                     }
-                }
-
-                return serial;
-            }
-
-            function deriveSwitchModelFromSerialOrVersion(serial, version) {
-                var s = clean(serial),
-                    v = clean(version),
-                    m = s.match(/^S(\d+)([A-Z])([A-Z])/i),
-                    img = v.match(/^([A-Z]\d+[A-Z]+)/i),
-                    prefix = '',
-                    family = '',
-                    variant = '';
-
-                if (m) {
-                    prefix = m[1];
-                    family = m[2];
-                    variant = m[3];
-                    if (/^[A-Z]$/.test(family)) {
-                        if (variant === 'P') {
-                            return 'FortiSwitch ' + prefix + family + '-POE';
+            
+                    try {
+                        group_resp = getHttpData(
+                            api_url + '/api/v2/cmdb/switch-controller/switch-group?access_token=' + encodeURIComponent(params.token)
+                        );
+                    }
+                    catch (error) {
+                        partial_errors.push('cmdb switch-group endpoint failed: ' + error);
+                    }
+            
+                    try {
+                        health_resp = getHttpData(
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch/health?access_token=' + encodeURIComponent(params.token)
+                        );
+                    }
+                    catch (error) {
+                        partial_errors.push('managed-switch/health endpoint failed: ' + error);
+                    }
+            
+                    try {
+                        port_stats_resp = queryUrls([
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch/port-stats?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/switch-controller/managed-switch/port-stats?access_token=' + encodeURIComponent(params.token)
+                        ]);
+                    }
+                    catch (error) {
+                        partial_errors.push('managed-switch/port-stats endpoint failed: ' + error);
+                    }
+            
+                    if (status_resp === null && legacy_monitor_resp === null && cmdb_resp === null) {
+                        throw partial_errors.join(' ');
+                    }
+            
+                    function resolveKey(v) {
+                        var aliases = switchAliases(v),
+                            key = '',
+                            i;
+            
+                        for (i = 0; i < aliases.length; i++) {
+                            if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
+                                key = alias_to_key[aliases[i]];
+                                break;
+                            }
                         }
-                        if (variant === 'N') {
-                            return 'FortiSwitch ' + prefix + family;
+            
+                        if (key === '') {
+                            key = aliases.length > 0 ? aliases[0] : '';
                         }
-                    }
-                }
-
-                if (img) {
-                    return img[1];
-                }
-
-                return '';
-            }
-
-            function normalizeVersion(obj) {
-                var keys = ['image_version', 'image-version', 'version', 'os_version', 'os-version', 'os_ver', 'firmware_version', 'firmware-version', 'firmware', 'image'],
-                    i, s, best = '';
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (!isMeaningfulString(s)) {
-                        continue;
-                    }
-                    if (likelyVersion(s)) {
-                        return s;
-                    }
-                    if (best === '' && /[A-Za-z]/.test(s)) {
-                        best = s;
-                    }
-                }
-
-                return best;
-            }
-
-            function normalizeModel(obj, serial, version) {
-                var keys = ['model_name', 'model-name', 'model', 'platform_str', 'platform-str', 'platform', 'product'],
-                    i, s;
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s) && likelyModel(s)) {
-                        return s;
-                    }
-                }
-
-                return deriveSwitchModelFromSerialOrVersion(serial, version);
-            }
-
-            function switchAliases(v) {
-                var serial = clean(first(v, ['serial', 'sn', 'q_origin_key', '__key', 'id'], '')),
-                    name = clean(normalizeName(v)),
-                    swid = clean(first(v, ['switch_id', 'switch-id'], ''));
-
-                return [serial, name, swid].filter(function (x, idx, arr) {
-                    return x !== '' && arr.indexOf(x) === idx;
-                });
-            }
-
-            function parseStatusParts(obj) {
-                var admin = clean(first(obj, ['admin_status', 'admin-status', 'admin_state', 'admin-state', 'authorization', 'admin'], '')),
-                    conn = clean(first(obj, ['connection_state', 'connection-state', 'connection', 'run_state', 'run-state', 'oper_state', 'oper-state', 'fortilink_status', 'fortilink-status', 'conn_status', 'conn-status', 'link'], '')),
-                    combined = clean(first(obj, ['status', 'state'], '')),
-                    raw = '',
-                    parts, num = 2;
-
-                if (combined !== '' && combined.indexOf('/') !== -1) {
-                    parts = combined.split('/');
-                    if (admin === '') {
-                        admin = clean(parts[0]);
-                    }
-                    if (conn === '') {
-                        conn = clean(parts.slice(1).join('/'));
-                    }
-                    raw = combined;
-                }
-                else if (combined !== '') {
-                    if (conn === '' && /(up|down|connected|disconnected|online|offline|healthy|lost|dead|missing)/i.test(combined)) {
-                        conn = combined;
-                    }
-                    else if (admin === '' && /(authorized|unauthorized|discovered|disabled|enable|disable)/i.test(combined)) {
-                        admin = combined;
-                    }
-                    raw = combined;
-                }
-
-                if (raw === '') {
-                    if (admin !== '' && conn !== '') {
-                        raw = admin + '/' + conn;
-                    }
-                    else {
-                        raw = conn !== '' ? conn : admin;
-                    }
-                }
-
-                if (/(authorized\/up|connected\s*\(|\bconnected\b|\bonline\b|\bhealthy\b|\bup\b)/i.test(raw) || /(connected|up|online|healthy)/i.test(conn)) {
-                    num = 1;
-                }
-                else if (/(discovered\/down|unauthorized|disconnected|offline|lost|dead|missing|\bdown\b)/i.test(raw) || /(disconnected|offline|down|lost|dead|missing)/i.test(conn)) {
-                    num = 0;
-                }
-                else if (clean(first(obj, ['address', 'ip', 'ip-address', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], '')) !== '' &&
-                         normalizeVersion(obj) !== '' &&
-                         !/^N\/A$/i.test(normalizeVersion(obj))) {
-                    num = 1;
-                }
-                else if (/^N\/A$/i.test(normalizeVersion(obj))) {
-                    num = 0;
-                }
-
-                if (raw === '') {
-                    raw = num === 1 ? 'up' : (num === 0 ? 'down' : 'unknown');
-                }
-
-                return {"raw": raw, "num": num, "admin": admin, "conn": conn};
-            }
-
-            function normalizeIp(obj) {
-                return clean(first(obj, ['address', 'ip', 'ip-address', 'connecting_from', 'connecting-from', 'remote_address', 'remote-address', 'mgmt_ip', 'management_ip', 'ipv4_address', 'ipv4-address'], ''));
-            }
-
-            function normalizeProfile(obj) {
-                return clean(first(obj, ['switch_profile', 'switch-profile', 'profile', 'switch-profile-name'], ''));
-            }
-
-            function normalizeJoinTime(obj) {
-                return clean(first(obj, ['join_time', 'join-time', 'join time'], ''));
-            }
-
-            function normalizeFlags(obj) {
-                return clean(first(obj, ['flag', 'flags'], ''));
-            }
-
-            function extractPortSummary(obj) {
-                var out = {"total": 0, "up": 0, "down": 0},
-                    explicit = Number(first(obj, ['port_total', 'ports_total', 'port_count', 'ports_count', 'max_ports'], NaN)),
-                    candidates = [
-                        first(obj, ['ports'], null),
-                        first(obj, ['interfaces'], null),
-                        first(obj, ['port_stats'], null),
-                        first(obj, ['port-stats'], null)
-                    ],
-                    i, c, keys, j, p, link;
-
-                if (!isNaN(explicit)) {
-                    out.total = Math.floor(explicit);
-                }
-
-                for (i = 0; i < candidates.length; i++) {
-                    c = candidates[i];
-                    if (Array.isArray(c)) {
-                        if (out.total === 0) {
-                            out.total = c.length;
+            
+                        if (key === '') {
+                            return '';
                         }
-                        for (j = 0; j < c.length; j++) {
-                            p = c[j];
+            
+                        aliases.forEach(function (a) {
+                            alias_to_key[a] = key;
+                        });
+            
+                        return key;
+                    }
+            
+                    function mergeObjects(target, src) {
+                        Object.keys(src || {}).forEach(function (x) {
+                            target[x] = src[x];
+                        });
+                    }
+            
+                    arrify(cmdb_resp || {}).forEach(function (item) {
+                        var key;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "status": {}, "legacy": {}, "health": {}, "port_stats": {}};
+                        }
+            
+                        devices[key].cfg = item;
+                    });
+            
+                    arrify(status_resp || {}).forEach(function (item) {
+                        var key;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "status": {}, "legacy": {}, "health": {}, "port_stats": {}};
+                        }
+            
+                        devices[key].status = item;
+                    });
+            
+                    arrify(legacy_monitor_resp || {}).forEach(function (item) {
+                        var key;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "status": {}, "legacy": {}, "health": {}, "port_stats": {}};
+                        }
+            
+                        devices[key].legacy = item;
+                    });
+            
+                    arrify(group_resp || {}).forEach(function (item) {
+                        var gname;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        gname = clean(first(item, ['name', 'q_origin_key', 'id'], ''));
+                        if (gname === '') {
+                            return;
+                        }
+            
+                        memberIds(item).forEach(function (m) {
+                            if (typeof groups_by_alias[m] === 'undefined') {
+                                groups_by_alias[m] = {};
+                            }
+                            groups_by_alias[m][gname] = true;
+                        });
+                    });
+            
+                    if (isObject(health_resp) && isObject(health_resp.results)) {
+                        Object.keys(health_resp.results).forEach(function (serial) {
+                            var key = typeof alias_to_key[serial] !== 'undefined' ? alias_to_key[serial] : serial;
+                            if (typeof devices[key] === 'undefined') {
+                                devices[key] = {"cfg": {}, "status": {}, "legacy": {}, "health": {}, "port_stats": {}};
+                                alias_to_key[serial] = key;
+                            }
+                            devices[key].health = health_resp.results[serial];
+                        });
+                    }
+            
+                    arrify(port_stats_resp || {}).forEach(function (item) {
+                        var key, ports;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "status": {}, "legacy": {}, "health": {}, "port_stats": {}};
+                        }
+            
+                        ports = first(item, ['ports'], {});
+                        devices[key].port_stats = isObject(ports) ? ports : {};
+                    });
+            
+                    function normalizePorts(legacy_ports, port_stats_ports) {
+                        var ports_out = {},
+                            i, pn, p, raw, target;
+            
+                        function normField(src, target_name, src_keys) {
+                            var v = first(src, src_keys, undefined);
+                            if (typeof v !== 'undefined' && v !== null && v !== '') {
+                                target[target_name] = v;
+                            }
+                        }
+            
+                        function ingest(p, pn) {
                             if (!isObject(p)) {
-                                continue;
+                                return;
                             }
-                            link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
-                            if (link === 'up' || link === 'connected') {
-                                out.up += 1;
+                            if (typeof ports_out[pn] === 'undefined') {
+                                ports_out[pn] = {};
                             }
-                            else if (link === 'down' || link === 'disconnected') {
-                                out.down += 1;
-                            }
+                            target = ports_out[pn];
+                            normField(p, 'rx_bytes', ['rx-bytes', 'rx_bytes']);
+                            normField(p, 'tx_bytes', ['tx-bytes', 'tx_bytes']);
+                            normField(p, 'rx_drops', ['rx-drops', 'rx_drops']);
+                            normField(p, 'tx_drops', ['tx-drops', 'tx_drops']);
+                            normField(p, 'rx_errors', ['rx-errors', 'rx_errors']);
+                            normField(p, 'tx_errors', ['tx-errors', 'tx_errors']);
+                            normField(p, 'port_power', ['port_power', 'port-power']);
+                            normField(p, 'link_status', ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status']);
+                            normField(p, 'speed', ['speed']);
                         }
-                        return out;
-                    }
-                    if (isObject(c)) {
-                        keys = Object.keys(c);
-                        if (out.total === 0) {
-                            out.total = keys.length;
-                        }
-                        for (j = 0; j < keys.length; j++) {
-                            p = c[keys[j]];
-                            if (!isObject(p)) {
-                                continue;
-                            }
-                            link = clean(first(p, ['link_status', 'link-status', 'oper_status', 'oper-status', 'state', 'status'], '')).toLowerCase();
-                            if (link === 'up' || link === 'connected') {
-                                out.up += 1;
-                            }
-                            else if (link === 'down' || link === 'disconnected') {
-                                out.down += 1;
-                            }
-                        }
-                        return out;
-                    }
-                }
-
-                return out;
-            }
-
-            function memberIds(group_item) {
-                var m = first(group_item, ['members'], []),
-                    out = [];
-
-                function pushMember(v) {
-                    var s = clean(v);
-                    if (s !== '' && out.indexOf(s) === -1) {
-                        out.push(s);
-                    }
-                }
-
-                if (Array.isArray(m)) {
-                    m.forEach(function (x) {
-                        if (typeof x === 'string' || typeof x === 'number') {
-                            pushMember(x);
-                        }
-                        else if (isObject(x)) {
-                            pushMember(first(x, ['switch_id', 'switch-id', 'name', 'q_origin_key', 'serial'], ''));
-                        }
-                    });
-                }
-                else if (typeof m === 'string') {
-                    m.split(/\s*,\s*/).forEach(pushMember);
-                }
-
-                return out;
-            }
-
-            try {
-                ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-                    var macro = '{$FGATE.' + field.toUpperCase() + '}';
-                    var key = field.split('.').pop();
-
-                    if (typeof params[key] === 'undefined') {
-                        throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
-                    }
-
-                    if (params[key] === macro || params[key] === '') {
-                        throw 'Please change ' + macro + ' macro to the proper value.';
-                    }
-                });
-
-                if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
-                    request.setProxy(params.http_proxy);
-                }
-
-                api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
-
-                var status_resp = null,
-                    legacy_monitor_resp = null,
-                    cmdb_resp = null,
-                    group_resp = null,
-                    devices = {},
-                    alias_to_key = {},
-                    groups_by_alias = {},
-                    partial_errors = [];
-
-                try {
-                    status_resp = queryUrls([
-                        api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
-                        api_url + '/api/v2/monitor/switch-controller/managed-switch/status?access_token=' + encodeURIComponent(params.token) + '&count=1000'
-                    ]);
-                }
-                catch (error) {
-                    partial_errors.push('status endpoint failed: ' + error);
-                }
-
-                try {
-                    legacy_monitor_resp = queryUrls([
-                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000&poe=true&port_stats=true&transceiver=true',
-                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
-                        api_url + '/api/v2/monitor/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
-                    ]);
-                }
-                catch (error) {
-                    partial_errors.push('legacy monitor endpoint failed: ' + error);
-                }
-
-                try {
-                    cmdb_resp = getHttpData(
-                        api_url + '/api/v2/cmdb/switch-controller/managed-switch?access_token=' + encodeURIComponent(params.token)
-                    );
-                }
-                catch (error) {
-                    partial_errors.push('cmdb managed-switch endpoint failed: ' + error);
-                }
-
-                try {
-                    group_resp = getHttpData(
-                        api_url + '/api/v2/cmdb/switch-controller/switch-group?access_token=' + encodeURIComponent(params.token)
-                    );
-                }
-                catch (error) {
-                    partial_errors.push('cmdb switch-group endpoint failed: ' + error);
-                }
-
-                if (status_resp === null && legacy_monitor_resp === null && cmdb_resp === null) {
-                    throw partial_errors.join(' ');
-                }
-
-                function resolveKey(v) {
-                    var aliases = switchAliases(v),
-                        key = '',
-                        i;
-
-                    for (i = 0; i < aliases.length; i++) {
-                        if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
-                            key = alias_to_key[aliases[i]];
-                            break;
-                        }
-                    }
-
-                    if (key === '') {
-                        key = aliases.length > 0 ? aliases[0] : '';
-                    }
-
-                    if (key === '') {
-                        return '';
-                    }
-
-                    aliases.forEach(function (a) {
-                        alias_to_key[a] = key;
-                    });
-
-                    return key;
-                }
-
-                function mergeObjects(target, src) {
-                    Object.keys(src || {}).forEach(function (x) {
-                        target[x] = src[x];
-                    });
-                }
-
-                arrify(cmdb_resp || {}).forEach(function (item) {
-                    var key;
-                    if (!isObject(item)) {
-                        return;
-                    }
-
-                    key = resolveKey(item);
-                    if (key === '') {
-                        return;
-                    }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
-                    }
-
-                    devices[key].cfg = item;
-                });
-
-                arrify(status_resp || {}).forEach(function (item) {
-                    var key;
-                    if (!isObject(item)) {
-                        return;
-                    }
-
-                    key = resolveKey(item);
-                    if (key === '') {
-                        return;
-                    }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
-                    }
-
-                    devices[key].status = item;
-                });
-
-                arrify(legacy_monitor_resp || {}).forEach(function (item) {
-                    var key;
-                    if (!isObject(item)) {
-                        return;
-                    }
-
-                    key = resolveKey(item);
-                    if (key === '') {
-                        return;
-                    }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {}, "status": {}, "legacy": {}};
-                    }
-
-                    devices[key].legacy = item;
-                });
-
-                arrify(group_resp || {}).forEach(function (item) {
-                    var gname;
-                    if (!isObject(item)) {
-                        return;
-                    }
-
-                    gname = clean(first(item, ['name', 'q_origin_key', 'id'], ''));
-                    if (gname === '') {
-                        return;
-                    }
-
-                    memberIds(item).forEach(function (m) {
-                        if (typeof groups_by_alias[m] === 'undefined') {
-                            groups_by_alias[m] = {};
-                        }
-                        groups_by_alias[m][gname] = true;
-                    });
-                });
-
-                result.data = Object.keys(devices).map(function (k) {
-                    var merged = {},
-                        cfg = devices[k].cfg || {},
-                        status = devices[k].status || {},
-                        legacy = devices[k].legacy || {},
-                        aliases = [],
-                        alias_seen = {},
-                        state,
-                        serial,
-                        name,
-                        version,
-                        model,
-                        port_summary,
-                        group_names = {};
-
-                    mergeObjects(merged, cfg);
-                    mergeObjects(merged, legacy);
-                    mergeObjects(merged, status);
-
-                    serial = clean(first(merged, ['serial', 'sn', 'q_origin_key', 'id'], k));
-                    name = clean(normalizeName(merged));
-                    version = clean(normalizeVersion(merged));
-                    model = clean(normalizeModel(merged, serial, version));
-                    state = parseStatusParts(merged);
-                    port_summary = extractPortSummary(merged);
-
-                    switchAliases(merged).concat([k]).forEach(function (a) {
-                        if (a !== '' && typeof alias_seen[a] === 'undefined') {
-                            alias_seen[a] = true;
-                            aliases.push(a);
-                        }
-                    });
-
-                    aliases.forEach(function (a) {
-                        if (typeof groups_by_alias[a] !== 'undefined') {
-                            Object.keys(groups_by_alias[a]).forEach(function (g) {
-                                group_names[g] = true;
+            
+                        if (isObject(port_stats_ports)) {
+                            Object.keys(port_stats_ports).forEach(function (pn) {
+                                ingest(port_stats_ports[pn], pn);
                             });
                         }
+            
+                        if (Array.isArray(legacy_ports)) {
+                            for (i = 0; i < legacy_ports.length; i++) {
+                                p = legacy_ports[i];
+                                if (!isObject(p)) {
+                                    continue;
+                                }
+                                pn = clean(first(p, ['interface', 'name', 'port'], ''));
+                                if (pn === '') {
+                                    continue;
+                                }
+                                ingest(p, pn);
+                            }
+                        }
+                        else if (isObject(legacy_ports)) {
+                            Object.keys(legacy_ports).forEach(function (pn) {
+                                ingest(legacy_ports[pn], pn);
+                            });
+                        }
+            
+                        return ports_out;
+                    }
+            
+                    function sumPoeUsage(ports_obj) {
+                        var sum = 0;
+                        if (!isObject(ports_obj)) {
+                            return 0;
+                        }
+                        Object.keys(ports_obj).forEach(function (pn) {
+                            var v = Number(ports_obj[pn].port_power);
+                            if (!isNaN(v)) {
+                                sum += v;
+                            }
+                        });
+                        return Math.round(sum * 100) / 100;
+                    }
+            
+                    result.data = Object.keys(devices).map(function (k) {
+                        var merged = {},
+                            cfg = devices[k].cfg || {},
+                            status = devices[k].status || {},
+                            legacy = devices[k].legacy || {},
+                            health = devices[k].health || {},
+                            port_stats = devices[k].port_stats || {},
+                            aliases = [],
+                            alias_seen = {},
+                            state,
+                            serial,
+                            name,
+                            version,
+                            model,
+                            port_summary,
+                            group_names = {},
+                            hsum,
+                            hcpu,
+                            hmem,
+                            hfan,
+                            htemp,
+                            huptime,
+                            hoverall,
+                            ports_out,
+                            poe_usage,
+                            poe_budget,
+                            legacy_ports;
+            
+                        mergeObjects(merged, cfg);
+                        mergeObjects(merged, legacy);
+                        mergeObjects(merged, status);
+            
+                        serial = clean(first(merged, ['serial', 'sn', 'q_origin_key', 'id'], k));
+                        name = clean(normalizeName(merged));
+                        version = clean(normalizeVersion(merged));
+                        model = clean(normalizeModel(merged, serial, version));
+                        state = parseStatusParts(merged);
+                        port_summary = extractPortSummary(merged);
+            
+                        switchAliases(merged).concat([k]).forEach(function (a) {
+                            if (a !== '' && typeof alias_seen[a] === 'undefined') {
+                                alias_seen[a] = true;
+                                aliases.push(a);
+                            }
+                        });
+            
+                        aliases.forEach(function (a) {
+                            if (typeof groups_by_alias[a] !== 'undefined') {
+                                Object.keys(groups_by_alias[a]).forEach(function (g) {
+                                    group_names[g] = true;
+                                });
+                            }
+                        });
+            
+                        hsum = isObject(health) && isObject(health.summary) ? health.summary : {};
+                        hcpu = isObject(hsum.cpu) ? Number(hsum.cpu.value) : NaN;
+                        hmem = isObject(hsum.memory) ? Number(hsum.memory.value) : NaN;
+                        hfan = isObject(hsum.fan) && isObject(hsum.fan.fan) ? clean(safeText(hsum.fan.fan.value)) : '';
+                        htemp = isObject(hsum.temperature) ? Number(hsum.temperature.value) : NaN;
+                        huptime = isObject(hsum.uptime) ? Number(hsum.uptime.value) : NaN;
+                        hoverall = clean(safeText(hsum.overall));
+            
+                        legacy_ports = first(merged, ['ports', 'port_stats', 'port-stats', 'interfaces'], null);
+                        ports_out = normalizePorts(legacy_ports, port_stats);
+                        poe_usage = sumPoeUsage(ports_out);
+                        poe_budget = Number(first(merged, ['max_poe_budget', 'max-poe-budget'], 0));
+            
+                        return {
+                            "key": k,
+                            "serial": serial,
+                            "name": name !== '' ? name : serial,
+                            "model": model,
+                            "ip": normalizeIp(merged),
+                            "version": version,
+                            "profile": normalizeProfile(merged),
+                            "switch_group": Object.keys(group_names).sort().join(', '),
+                            "admin_state": state.admin,
+                            "connection_state": state.conn,
+                            "state_raw": state.raw,
+                            "state_num": state.num,
+                            "flags": normalizeFlags(merged),
+                            "join_time": normalizeJoinTime(merged),
+                            "port_total": port_summary.total,
+                            "port_up": port_summary.up,
+                            "port_down": port_summary.down,
+                            "description": clean(first(merged, ['description', 'comments'], '')),
+                            "cpu_usage": isNaN(hcpu) ? 0 : hcpu,
+                            "mem_usage": isNaN(hmem) ? 0 : hmem,
+                            "fan_status": hfan,
+                            "overall_health": hoverall,
+                            "temperature": isNaN(htemp) ? 0 : htemp,
+                            "uptime": isNaN(huptime) ? 0 : huptime,
+                            "eos": clean(first(merged, ['eos'], '')),
+                            "max_poe_budget": isNaN(poe_budget) ? 0 : poe_budget,
+                            "poe_usage": poe_usage,
+                            "ports": ports_out
+                        };
                     });
-
-                    return {
-                        "key": k,
-                        "serial": serial,
-                        "name": name !== '' ? name : serial,
-                        "model": model,
-                        "ip": normalizeIp(merged),
-                        "version": version,
-                        "profile": normalizeProfile(merged),
-                        "switch_group": Object.keys(group_names).sort().join(', '),
-                        "admin_state": state.admin,
-                        "connection_state": state.conn,
-                        "state_raw": state.raw,
-                        "state_num": state.num,
-                        "flags": normalizeFlags(merged),
-                        "join_time": normalizeJoinTime(merged),
-                        "port_total": port_summary.total,
-                        "port_up": port_summary.up,
-                        "port_down": port_summary.down,
-                        "description": clean(first(merged, ['description', 'comments'], ''))
-                    };
-                });
-
-                result.data.sort(function (a, b) {
-                    if (a.name < b.name) {
-                        return -1;
-                    }
-                    if (a.name > b.name) {
-                        return 1;
-                    }
-                    return 0;
-                });
-
-                result.ok = 1;
-                        result.error = '';
-            }
-            catch (error) {
-                error_msg = error.toString();
-                error_msg += error_msg.endsWith('.') ? '' : '.';
-                Zabbix.log(3, '[ FortiSwitch by FortiGate HTTP ] ERROR: ' + error_msg);
-                result.error = error_msg;
-            }
-
-            return JSON.stringify(result);
-      description: Item for gathering managed FortiSwitch inventory, controller runtime status, switch-group membership, and basic port summary from the FortiGate API.
-      timeout: '{$FGATE.DATA.TIMEOUT}'
-      parameters:
-      - name: fqdn
-        value: '{$FGATE.API.FQDN}'
-      - name: http_proxy
-        value: '{$FGATE.HTTP.PROXY}'
-      - name: port
-        value: '{$FGATE.API.PORT}'
-      - name: scheme
-        value: '{$FGATE.SCHEME}'
-      - name: token
-        value: '{$FGATE.API.TOKEN}'
+            
+                    result.data.sort(function (a, b) {
+                        if (a.name < b.name) {
+                            return -1;
+                        }
+                        if (a.name > b.name) {
+                            return 1;
+                        }
+                        return 0;
+                    });
+            
+                    result.ok = 1;
+                            result.error = '';
+                }
+                catch (error) {
+                    error_msg = error.toString();
+                    error_msg += error_msg.endsWith('.') ? '' : '.';
+                    Zabbix.log(3, '[ FortiSwitch by FortiGate HTTP ] ERROR: ' + error_msg);
+                    result.error = error_msg;
+                }
+            
+                return JSON.stringify(result);
+          description: 'Item for gathering managed FortiSwitch inventory, controller runtime status, switch-group membership, and basic port summary from the FortiGate API.'
+          timeout: '{$FGATE.DATA.TIMEOUT}'
+          parameters:
+            - name: fqdn
+              value: '{$FGATE.API.FQDN}'
+            - name: http_proxy
+              value: '{$FGATE.HTTP.PROXY}'
+            - name: port
+              value: '{$FGATE.API.PORT}'
+            - name: scheme
+              value: '{$FGATE.SCHEME}'
+            - name: token
+              value: '{$FGATE.API.TOKEN}'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: e7e892806a9541a784c67bc6b8bacb15
+          name: 'Managed FortiSwitch discovery'
+          type: DEPENDENT
+          key: fgsw.switch.discovery
+          delay: '0'
+          description: 'Discovery of FortiSwitch devices managed by the FortiGate.'
+          item_prototypes:
+            - uuid: 703c67453c9042c59385fd9f99cfd2ba
+              name: 'FortiSwitch [{#SWNAME}]: Admin state'
+              type: DEPENDENT
+              key: 'fgsw.switch.admin[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Administrative or authorization state of the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.admin_state
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: d347b031e72c487b8cc86705ccc83c72
+              name: 'FortiSwitch [{#SWNAME}]: Connection state'
+              type: DEPENDENT
+              key: 'fgsw.switch.connection[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Connection state reported by the FortiGate controller for the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.connection_state
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: da4dc623368045f1ade05107aad93f3f
+              name: 'FortiSwitch [{#SWNAME}]: Description'
+              type: DEPENDENT
+              key: 'fgsw.switch.description[{#SWKEY}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Description or comments configured on the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.description
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 502449a4eb884184a9e5654ca6d4ea00
+              name: 'FortiSwitch [{#SWNAME}]: End of Support'
+              type: DEPENDENT
+              key: 'fgsw.switch.eos[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'End-of-Support indication reported by the controller.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.eos
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: c2f158b720344a20b7574175d5a97b80
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.eos[{#SWKEY}])<>"false" and length(last(/FortiSwitch by FortiGate HTTP/fgsw.switch.eos[{#SWKEY}]))>0'
+                  name: 'FortiSwitch [{#SWNAME}]: is End of Support'
+                  priority: WARNING
+                  description: 'Controller reports the FortiSwitch is at or past End of Support.'
+                  tags:
+                    - tag: scope
+                      value: lifecycle
+            - uuid: 45e4a6603ea549e59fbb0dcdc33f1b1d
+              name: 'FortiSwitch [{#SWNAME}]: Fan status'
+              type: DEPENDENT
+              key: 'fgsw.switch.fan_status[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Fan status reported by the controller health summary.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.fan_status
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: health
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 7dab5e31f76e4999a2a4fd71a3e24779
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.fan_status[{#SWKEY}])<>"OK" and length(last(/FortiSwitch by FortiGate HTTP/fgsw.switch.fan_status[{#SWKEY}]))>0'
+                  name: 'FortiSwitch [{#SWNAME}]: Fan is not OK'
+                  priority: WARNING
+                  description: 'Health summary reports the fan in a non-OK state.'
+                  tags:
+                    - tag: scope
+                      value: hardware
+            - uuid: a84ed847d9ed46b9a8ddf14584b29a44
+              name: 'FortiSwitch [{#SWNAME}]: Flags'
+              type: DEPENDENT
+              key: 'fgsw.switch.flags[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Flag string from the controller runtime status, such as L2/L3 or other FortiLink flags.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.flags
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: d6ed6f8fee8a48e4a716bd9c77f10648
+              name: 'FortiSwitch [{#SWNAME}]: Get data'
+              type: DEPENDENT
+              key: 'fgsw.switch.get_data[{#SWKEY}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Item for gathering normalized data for the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: raw
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: b2064b34bb184cb3b068d6f3a084a6aa
+              name: 'FortiSwitch [{#SWNAME}]: Switch group'
+              type: DEPENDENT
+              key: 'fgsw.switch.group[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Comma-separated FortiSwitch group membership resolved from switch-controller switch-group.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.switch_group
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 6a7424a3839748ddaedb39de92f674a2
+              name: 'FortiSwitch [{#SWNAME}]: IP address'
+              type: DEPENDENT
+              key: 'fgsw.switch.ip[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Management or connecting IP address of the FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ip
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: network
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: d802da5aa76943dfba6a929ae1bb8ebd
+              name: 'FortiSwitch [{#SWNAME}]: Join time'
+              type: DEPENDENT
+              key: 'fgsw.switch.join_time[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Last join time reported by the FortiGate controller.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.join_time
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 45058af7f47f4613857686f2b66d9d35
+              name: 'FortiSwitch [{#SWNAME}]: Model'
+              type: DEPENDENT
+              key: 'fgsw.switch.model[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Model of the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.model
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: db1da8fd49e14ee5aa49bd360bdb800c
+              name: 'FortiSwitch [{#SWNAME}]: Switch name'
+              type: DEPENDENT
+              key: 'fgsw.switch.name[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Resolved FortiSwitch name used by the controller and item names.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.name
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: de9f33ff46e24263a2f26f550bd1731d
+              name: 'FortiSwitch [{#SWNAME}]: Overall health'
+              type: DEPENDENT
+              key: 'fgsw.switch.overall_health[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Overall health severity reported by the controller summary.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.overall_health
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: health
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: c6c9d74656fc4a3fa35ae6303fc8bf2f
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.overall_health[{#SWKEY}],#1)<>"good" and last(/FortiSwitch by FortiGate HTTP/fgsw.switch.overall_health[{#SWKEY}],#2)<>"good" and length(last(/FortiSwitch by FortiGate HTTP/fgsw.switch.overall_health[{#SWKEY}]))>0'
+                  name: 'FortiSwitch [{#SWNAME}]: Overall health is not good'
+                  priority: AVERAGE
+                  description: 'Two consecutive non-good health readings.'
+                  dependencies:
+                    - name: 'FortiSwitch [{#SWNAME}] is down'
+                      expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.state[{#SWKEY}])=0'
+                  tags:
+                    - tag: scope
+                      value: health
+            - uuid: 7757441a58204aaa834955e009f0051b
+              name: 'FortiSwitch [{#SWNAME}]: Port count'
+              type: DEPENDENT
+              key: 'fgsw.switch.ports[{#SWKEY}]'
+              delay: '0'
+              description: 'Total number of ports discovered for the FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.port_total
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 5483758dd0ca410f862b279a73b287f7
+              name: 'FortiSwitch [{#SWNAME}]: Ports down'
+              type: DEPENDENT
+              key: 'fgsw.switch.ports_down[{#SWKEY}]'
+              delay: '0'
+              description: 'Count of switch ports currently reported down by the controller, when available.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.port_down
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 9306761af7d940e8a390b4b19611393e
+              name: 'FortiSwitch [{#SWNAME}]: Ports up'
+              type: DEPENDENT
+              key: 'fgsw.switch.ports_up[{#SWKEY}]'
+              delay: '0'
+              description: 'Count of switch ports currently reported up by the controller, when available.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.port_up
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 7a7abc19f3f6485fa7c353f286718646
+              name: 'FortiSwitch [{#SWNAME}]: Profile'
+              type: DEPENDENT
+              key: 'fgsw.switch.profile[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Assigned switch profile if returned by the controller API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.profile
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 648f1e99d3b34eb3b750fa5ecc65c1c0
+              name: 'FortiSwitch [{#SWNAME}]: Serial number'
+              type: DEPENDENT
+              key: 'fgsw.switch.serial[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'FortiSwitch serial number.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.serial
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 432806ac6c724327aee3b08a23788144
+              name: 'FortiSwitch [{#SWNAME}]: State'
+              type: DEPENDENT
+              key: 'fgsw.switch.state[{#SWKEY}]'
+              delay: '0'
+              description: 'Normalized runtime state of the managed FortiSwitch.'
+              valuemap:
+                name: 'Fortinet managed device state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_num
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 47cfd56595f74343984685c80f8bf854
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.state[{#SWKEY}])=0'
+                  name: 'FortiSwitch [{#SWNAME}] is down'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'The managed FortiSwitch is reported as down by the normalized controller API response.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: dad88e56f76b45039a1910f08066e6a3
+              name: 'FortiSwitch [{#SWNAME}]: State raw'
+              type: DEPENDENT
+              key: 'fgsw.switch.state_raw[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Raw runtime state string of the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_raw
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: switch
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 56a4918c97ba4f42a98563a618d8bce0
+              name: 'FortiSwitch [{#SWNAME}]: Firmware version'
+              type: DEPENDENT
+              key: 'fgsw.switch.version[{#SWKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Runtime firmware version of the managed FortiSwitch if returned by the controller API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.version
+              master_item:
+                key: 'fgsw.switch.get_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: system
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+          graph_prototypes:
+            - uuid: cdf7f422e1d44037840dcfe5463b4762
+              name: 'FortiSwitch [{#SWNAME}]: Port states'
+              graph_items:
+                - drawtype: GRADIENT_LINE
+                  color: 1E88E5
+                  item:
+                    host: 'FortiSwitch by FortiGate HTTP'
+                    key: 'fgsw.switch.ports[{#SWKEY}]'
+                - sortorder: '1'
+                  drawtype: BOLD_LINE
+                  color: 199C0D
+                  item:
+                    host: 'FortiSwitch by FortiGate HTTP'
+                    key: 'fgsw.switch.ports_up[{#SWKEY}]'
+                - sortorder: '2'
+                  drawtype: BOLD_LINE
+                  color: F63100
+                  item:
+                    host: 'FortiSwitch by FortiGate HTTP'
+                    key: 'fgsw.switch.ports_down[{#SWKEY}]'
+            - uuid: bd26e98bb6984fa385cf53f1a81bf498
+              name: 'FortiSwitch [{#SWNAME}]: Runtime state'
+              graph_items:
+                - color: 199C0D
+                  item:
+                    host: 'FortiSwitch by FortiGate HTTP'
+                    key: 'fgsw.switch.state[{#SWKEY}]'
+          master_item:
+            key: fgsw.switches.get_data
+          lld_macro_paths:
+            - lld_macro: '{#SWGROUP}'
+              path: $.switch_group
+            - lld_macro: '{#SWIP}'
+              path: $.ip
+            - lld_macro: '{#SWKEY}'
+              path: $.key
+            - lld_macro: '{#SWMODEL}'
+              path: $.model
+            - lld_macro: '{#SWNAME}'
+              path: $.name
+            - lld_macro: '{#SWSERIAL}'
+              path: $.serial
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 6h
+        - uuid: 67e82a7a6a514238b28dec3de5c8e04f
+          name: 'FortiSwitch Operations discovery'
+          type: DEPENDENT
+          key: fgsw.switch.ops.discovery
+          delay: '0'
+          description: 'Discovery of operational metrics for managed FortiSwitches (CPU, memory, temperature, uptime, PoE).'
+          item_prototypes:
+            - uuid: 17c774efc5d546098a02ff115014c178
+              name: 'FortiSwitch [{#SWNAME}]: CPU usage'
+              type: DEPENDENT
+              key: 'fgsw.switch.cpu[{#SWKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              description: 'Current CPU usage of the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.cpu_usage
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 482b5c6037544862a3694a61ccb9c66d
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.cpu[{#SWKEY}])>{$FGATE.SW.CPU.WARN}'
+                  name: 'FortiSwitch [{#SWNAME}]: CPU usage is too high'
+                  opdata: 'Current CPU: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'CPU usage on the FortiSwitch is above the warning threshold.'
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: 8e7db354e15c4bf9818a27a94e57709c
+              name: 'FortiSwitch [{#SWNAME}]: Memory usage'
+              type: DEPENDENT
+              key: 'fgsw.switch.memory[{#SWKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              description: 'Current memory usage of the managed FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.mem_usage
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 012ad34880e74c0ea27af1b43d32bc4d
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.memory[{#SWKEY}])>{$FGATE.SW.MEM.WARN}'
+                  name: 'FortiSwitch [{#SWNAME}]: Memory usage is too high'
+                  opdata: 'Current memory: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Memory usage on the FortiSwitch is above the warning threshold.'
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: 222b2323621047f68134108ffa1a6d3b
+              name: 'FortiSwitch [{#SWNAME}]: Operations data'
+              type: DEPENDENT
+              key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Per-switch normalized data slice used by the operations item prototypes.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: raw
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: b6cc25797ace4a49a4e111a7fab584b4
+              name: 'FortiSwitch [{#SWNAME}]: Max PoE budget'
+              type: DEPENDENT
+              key: 'fgsw.switch.poe_budget[{#SWKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: W
+              description: 'Maximum PoE budget reported for this FortiSwitch.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.max_poe_budget
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 2be96ebdd670494c847e5643dfb2c23e
+              name: 'FortiSwitch [{#SWNAME}]: PoE usage'
+              type: DEPENDENT
+              key: 'fgsw.switch.poe_usage[{#SWKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: W
+              description: 'Sum of port PoE consumption reported by the controller.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.poe_usage
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: dcaa5c2ffcb741c28a2776a8e94980c2
+              name: 'FortiSwitch [{#SWNAME}]: PoE usage percent'
+              type: CALCULATED
+              key: 'fgsw.switch.poe_usage_pct[{#SWKEY}]'
+              delay: 3m
+              value_type: FLOAT
+              units: '%'
+              params: '(last(//fgsw.switch.poe_budget[{#SWKEY}])>0)*(last(//fgsw.switch.poe_usage[{#SWKEY}])/last(//fgsw.switch.poe_budget[{#SWKEY}])*100)'
+              description: 'PoE usage as a percentage of the configured budget. Reports 0 when the budget is unknown.'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 5fa538aeb27b419f8417667f18121124
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.poe_usage_pct[{#SWKEY}])>{$FGATE.SW.POE.USG.WARN}'
+                  name: 'FortiSwitch [{#SWNAME}]: PoE usage is too high'
+                  opdata: 'PoE usage: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'PoE usage exceeds the warning threshold relative to the configured budget.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: b9bb88affdbe4590a7bb352b4724a428
+              name: 'FortiSwitch [{#SWNAME}]: Temperature'
+              type: DEPENDENT
+              key: 'fgsw.switch.temperature[{#SWKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: °C
+              description: 'Temperature reading from the controller health summary.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.temperature
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 76ae1193d79541beacc112f73aab98ce
+              name: 'FortiSwitch [{#SWNAME}]: Uptime'
+              type: DEPENDENT
+              key: 'fgsw.switch.uptime[{#SWKEY}]'
+              delay: '0'
+              units: s
+              description: 'Uptime of the FortiSwitch as reported by the controller health summary.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.uptime
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgsw.switch.ops_data[{#SWKEY}]'
+              tags:
+                - tag: component
+                  value: operations
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 30aaf1d78362466090465619264edef2
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.switch.uptime[{#SWKEY}])<10m and last(/FortiSwitch by FortiGate HTTP/fgsw.switch.uptime[{#SWKEY}])>0'
+                  name: 'FortiSwitch [{#SWNAME}]: Has been rebooted'
+                  opdata: 'Uptime: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'The FortiSwitch rebooted within the last 10 minutes.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: fgsw.switches.get_data
+          lld_macro_paths:
+            - lld_macro: '{#SWGROUP}'
+              path: $.switch_group
+            - lld_macro: '{#SWIP}'
+              path: $.ip
+            - lld_macro: '{#SWKEY}'
+              path: $.key
+            - lld_macro: '{#SWMODEL}'
+              path: $.model
+            - lld_macro: '{#SWNAME}'
+              path: $.name
+            - lld_macro: '{#SWSERIAL}'
+              path: $.serial
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 6h
+        - uuid: 1b1e5f2554954dfa8719824c0810e329
+          name: 'FortiSwitch Port discovery'
+          type: DEPENDENT
+          key: fgsw.switch.port.discovery
+          delay: '0'
+          description: 'Discovery of (switch, port) pairs across managed FortiSwitch devices for per-port traffic statistics.'
+          item_prototypes:
+            - uuid: b814e49db2cc48dd92188386846e3ca4
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Bits received'
+              type: DEPENDENT
+              key: 'fgsw.port.rx_bps[{#SWKEY},{#PORT}]'
+              delay: '0'
+              units: bps
+              description: 'Inbound traffic rate on this port.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.rx_bytes.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+                - type: MULTIPLIER
+                  parameters:
+                    - '8'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: bfd967d361fc4bdcb82bebbe6a43128e
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.port.rx_bps[{#SWKEY},{#PORT}]) > ({$FGATE.SW.PORT.SPEED.MAX:"{#PORT}"} * 1000000 * 0.8)'
+                  name: 'FortiSwitch [{#SWNAME}]: {#PORT}: High bandwidth usage receive (>80%)'
+                  priority: WARNING
+                  description: 'Inbound traffic exceeds 80% of the configured port speed.'
+                  manual_close: 'YES'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 9c2b9c4b289e422eaf744447f6640b16
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Inbound dropped packets'
+              type: DEPENDENT
+              key: 'fgsw.port.rx_drops[{#SWKEY},{#PORT}]'
+              delay: '0'
+              description: 'Inbound dropped packets counter.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.rx_drops.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: d1ec03bd8146476f9b9598c4cba7f063
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Inbound packets with errors'
+              type: DEPENDENT
+              key: 'fgsw.port.rx_errors[{#SWKEY},{#PORT}]'
+              delay: '0'
+              description: 'Inbound packet error counter.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.rx_errors.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: 84e45afc920e4cdb913627dbd1454c52
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Bits sent'
+              type: DEPENDENT
+              key: 'fgsw.port.tx_bps[{#SWKEY},{#PORT}]'
+              delay: '0'
+              units: bps
+              description: 'Outbound traffic rate on this port.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.tx_bytes.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+                - type: CHANGE_PER_SECOND
+                  parameters:
+                    - ''
+                - type: MULTIPLIER
+                  parameters:
+                    - '8'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: 9bf889ff609b456aa8abf21163089d0f
+                  expression: 'last(/FortiSwitch by FortiGate HTTP/fgsw.port.tx_bps[{#SWKEY},{#PORT}]) > ({$FGATE.SW.PORT.SPEED.MAX:"{#PORT}"} * 1000000 * 0.8)'
+                  name: 'FortiSwitch [{#SWNAME}]: {#PORT}: High bandwidth usage send (>80%)'
+                  priority: WARNING
+                  description: 'Outbound traffic exceeds 80% of the configured port speed.'
+                  manual_close: 'YES'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: e7049117ec5f4ffeb7c4eb097911a147
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Outbound dropped packets'
+              type: DEPENDENT
+              key: 'fgsw.port.tx_drops[{#SWKEY},{#PORT}]'
+              delay: '0'
+              description: 'Outbound dropped packets counter.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.tx_drops.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+            - uuid: e0352be291824ab28291aaa9db0fefb3
+              name: 'FortiSwitch [{#SWNAME}]: {#PORT}: Outbound packets with errors'
+              type: DEPENDENT
+              key: 'fgsw.port.tx_errors[{#SWKEY},{#PORT}]'
+              delay: '0'
+              description: 'Outbound packet error counter.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#SWKEY}")].ports.{#PORT}.tx_errors.first()'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: fgsw.switches.get_data
+              tags:
+                - tag: component
+                  value: port
+                - tag: port
+                  value: '{#PORT}'
+                - tag: switch
+                  value: '{#SWNAME}'
+                - tag: switch_group
+                  value: '{#SWGROUP}'
+              trigger_prototypes:
+                - uuid: c7f57a25492d4c8ca8e0f7238e7d0e85
+                  expression: 'min(/FortiSwitch by FortiGate HTTP/fgsw.port.tx_errors[{#SWKEY},{#PORT}],4m)>{$FGATE.SW.PORT.SEND.ERRORS.WARN}'
+                  name: 'FortiSwitch [{#SWNAME}]: {#PORT}: High send error rate'
+                  priority: WARNING
+                  description: 'Outbound packet errors above the threshold sustained for at least 4 minutes.'
+                  tags:
+                    - tag: scope
+                      value: errors
+          master_item:
+            key: fgsw.switches.get_data
+          lld_macro_paths:
+            - lld_macro: '{#PORT}'
+              path: $.port
+            - lld_macro: '{#SWGROUP}'
+              path: $.switch_group
+            - lld_macro: '{#SWKEY}'
+              path: $.key
+            - lld_macro: '{#SWNAME}'
+              path: $.name
+            - lld_macro: '{#SWSERIAL}'
+              path: $.serial
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var result = [];
+                  JSON.parse(value).forEach(function (sw) {
+                      var ports = sw.ports || {};
+                      Object.keys(ports).forEach(function (pn) {
+                          var p = ports[pn] || {};
+                          var ls = (p.link_status ? String(p.link_status) : '').toLowerCase();
+                          if (ls === 'down' || ls === 'disconnected' || ls === 'disabled' || ls === 'no_link') {
+                              return;
+                          }
+                          result.push({
+                              "key": sw.key,
+                              "name": sw.name,
+                              "serial": sw.serial,
+                              "switch_group": sw.switch_group,
+                              "port": pn
+                          });
+                      });
+                  });
+                  return JSON.stringify(result);
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 6h
       tags:
-      - tag: component
-        value: raw
-    - uuid: 99a54308bc814097b4b167bf283f6e37
-      name: API availability status
-      type: DEPENDENT
-      key: fgsw.api.status
-      delay: '0'
-      description: Checking API availability by normalized response.
-      valuemap:
-        name: Service state
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.ok
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '0'
-      master_item:
-        key: fgsw.switches.get_data
-      tags:
-      - tag: component
-        value: health
-      triggers:
-      - uuid: 947d83249fab46dd95576c8cf3b2181a
-        expression: last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0
-        name: Unexpected response from API
-        priority: AVERAGE
-        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.
-        tags:
-        - tag: scope
-          value: availability
-    - uuid: f0478d1d9a094b9fba9cff9b6fb593ac
-      name: Master metric item errors
-      type: DEPENDENT
-      key: fgsw.data_errors
-      delay: '0'
-      value_type: TEXT
-      history: '0'
-      trends: '0'
-      description: Item for gathering errors of the master metric.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.error
-        error_handler: CUSTOM_VALUE
-        error_handler_params: ''
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-      tags:
-      - tag: component
-        value: error
-      triggers:
-      - uuid: 8802c2c28e284bdea3079d6b665da904
-        expression: length(last(/FortiSwitch by FortiGate HTTP/fgsw.data_errors))>0
-        name: There are errors in the master metric
-        priority: WARNING
-        dependencies:
-        - name: Unexpected response from API
-          expression: last(/FortiSwitch by FortiGate HTTP/fgsw.api.status)=0
-        tags:
-        - tag: scope
-          value: availability
-    - uuid: 36115d0b14314cb59292110a2a09da9c
-      name: Managed FortiSwitch count
-      type: DEPENDENT
-      key: fgsw.switch.count
-      delay: '0'
-      description: Number of FortiSwitch devices returned by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data.length()
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '0'
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: 42de5962c0bc4c3aa2527223c69927a9
-      name: Managed FortiSwitch connected
-      type: DEPENDENT
-      key: fgsw.switch.connected
-      delay: '0'
-      description: Number of managed FortiSwitch devices with a normalized state of up.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: da3837db88364736a573c9440698722e
-      name: Managed FortiSwitch not connected
-      type: DEPENDENT
-      key: fgsw.switch.not_connected
-      delay: '0'
-      description: Number of managed FortiSwitch devices not currently normalized as up. This includes down or unknown states.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: d90bdef8afda45798f55e5654e57c9b1
-      name: Managed FortiSwitch connected (%)
-      type: DEPENDENT
-      key: fgsw.switch.connected_pct
-      delay: '0'
-      value_type: FLOAT
-      units: '%'
-      description: Percentage of managed FortiSwitch devices currently normalized as up.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: 45ad96d698a644e3879c97281b353781
-      name: Total FortiSwitch ports
-      type: DEPENDENT
-      key: fgsw.port.total
-      delay: '0'
-      description: Total number of switch ports across all managed FortiSwitch devices returned by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_total || 0); }, 0);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: 7969ff1e444b404b84891d1e37a1a46d
-      name: FortiSwitch ports up
-      type: DEPENDENT
-      key: fgsw.port.up
-      delay: '0'
-      description: Total number of managed FortiSwitch ports currently reported up by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_up || 0); }, 0);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: 01603ddf56324a5996e84eac50bb7374
-      name: FortiSwitch ports down
-      type: DEPENDENT
-      key: fgsw.port.down
-      delay: '0'
-      description: Total number of managed FortiSwitch ports currently reported down by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.port_down || 0); }, 0);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    - uuid: 31edfefa2bf14a758f09740e49a4724c
-      name: FortiSwitch ports up (%)
-      type: DEPENDENT
-      key: fgsw.port.up_pct
-      delay: '0'
-      value_type: FLOAT
-      units: '%'
-      description: Percentage of managed FortiSwitch ports currently reported up by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - 'var data = JSON.parse(value), total = 0, up = 0; data.forEach(function (v) { total += Number(v.port_total || 0); up += Number(v.port_up || 0); }); return total > 0 ? (up * 100 / total).toFixed(2) : 0;'
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fgsw.switches.get_data
-    discovery_rules:
-    - uuid: e7e892806a9541a784c67bc6b8bacb15
-      name: Managed FortiSwitch discovery
-      type: DEPENDENT
-      key: fgsw.switch.discovery
-      delay: '0'
-      description: Discovery of FortiSwitch devices managed by the FortiGate.
-      master_item:
-        key: fgsw.switches.get_data
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 6h
-      lld_macro_paths:
-      - lld_macro: '{#SWKEY}'
-        path: $.key
-      - lld_macro: '{#SWSERIAL}'
-        path: $.serial
-      - lld_macro: '{#SWNAME}'
-        path: $.name
-      - lld_macro: '{#SWMODEL}'
-        path: $.model
-      - lld_macro: '{#SWIP}'
-        path: $.ip
-      - lld_macro: '{#SWGROUP}'
-        path: $.switch_group
-      item_prototypes:
-      - uuid: d6ed6f8fee8a48e4a716bd9c77f10648
-        name: 'FortiSwitch [{#SWNAME}]: Get data'
-        type: DEPENDENT
-        key: fgsw.switch.get_data[{#SWKEY}]
-        delay: '0'
-        history: '0'
-        value_type: TEXT
-        trends: '0'
-        description: Item for gathering normalized data for the managed FortiSwitch.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.data[?(@.key == "{#SWKEY}")].first()
-          error_handler: DISCARD_VALUE
-        master_item:
-          key: fgsw.switches.get_data
-        tags:
-        - tag: component
-          value: raw
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 432806ac6c724327aee3b08a23788144
-        name: 'FortiSwitch [{#SWNAME}]: State'
-        type: DEPENDENT
-        key: fgsw.switch.state[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Normalized runtime state of the managed FortiSwitch.
-        valuemap:
-          name: Fortinet managed device state
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.state_num
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: dad88e56f76b45039a1910f08066e6a3
-        name: 'FortiSwitch [{#SWNAME}]: State raw'
-        type: DEPENDENT
-        key: fgsw.switch.state_raw[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Raw runtime state string of the managed FortiSwitch.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.state_raw
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 703c67453c9042c59385fd9f99cfd2ba
-        name: 'FortiSwitch [{#SWNAME}]: Admin state'
-        type: DEPENDENT
-        key: fgsw.switch.admin[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Administrative or authorization state of the managed FortiSwitch.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.admin_state
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: d347b031e72c487b8cc86705ccc83c72
-        name: 'FortiSwitch [{#SWNAME}]: Connection state'
-        type: DEPENDENT
-        key: fgsw.switch.connection[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Connection state reported by the FortiGate controller for the managed FortiSwitch.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.connection_state
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: db1da8fd49e14ee5aa49bd360bdb800c
-        name: 'FortiSwitch [{#SWNAME}]: Switch name'
-        type: DEPENDENT
-        key: fgsw.switch.name[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Resolved FortiSwitch name used by the controller and item names.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.name
-        tags:
-        - tag: component
-          value: system
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 648f1e99d3b34eb3b750fa5ecc65c1c0
-        name: 'FortiSwitch [{#SWNAME}]: Serial number'
-        type: DEPENDENT
-        key: fgsw.switch.serial[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: FortiSwitch serial number.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.serial
-        tags:
-        - tag: component
-          value: system
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 6a7424a3839748ddaedb39de92f674a2
-        name: 'FortiSwitch [{#SWNAME}]: IP address'
-        type: DEPENDENT
-        key: fgsw.switch.ip[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Management or connecting IP address of the FortiSwitch.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.ip
-        tags:
-        - tag: component
+        - tag: class
           value: network
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 45058af7f47f4613857686f2b66d9d35
-        name: 'FortiSwitch [{#SWNAME}]: Model'
-        type: DEPENDENT
-        key: fgsw.switch.model[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Model of the managed FortiSwitch.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.model
-        tags:
-        - tag: component
-          value: system
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 56a4918c97ba4f42a98563a618d8bce0
-        name: 'FortiSwitch [{#SWNAME}]: Firmware version'
-        type: DEPENDENT
-        key: fgsw.switch.version[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Runtime firmware version of the managed FortiSwitch if returned by the controller API.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.version
-        tags:
-        - tag: component
-          value: system
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 7a7abc19f3f6485fa7c353f286718646
-        name: 'FortiSwitch [{#SWNAME}]: Profile'
-        type: DEPENDENT
-        key: fgsw.switch.profile[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Assigned switch profile if returned by the controller API.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.profile
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: b2064b34bb184cb3b068d6f3a084a6aa
-        name: 'FortiSwitch [{#SWNAME}]: Switch group'
-        type: DEPENDENT
-        key: fgsw.switch.group[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Comma-separated FortiSwitch group membership resolved from switch-controller switch-group.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.switch_group
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: d802da5aa76943dfba6a929ae1bb8ebd
-        name: 'FortiSwitch [{#SWNAME}]: Join time'
-        type: DEPENDENT
-        key: fgsw.switch.join_time[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Last join time reported by the FortiGate controller.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.join_time
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: a84ed847d9ed46b9a8ddf14584b29a44
-        name: 'FortiSwitch [{#SWNAME}]: Flags'
-        type: DEPENDENT
-        key: fgsw.switch.flags[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Flag string from the controller runtime status, such as L2/L3 or other FortiLink flags.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.flags
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 7757441a58204aaa834955e009f0051b
-        name: 'FortiSwitch [{#SWNAME}]: Port count'
-        type: DEPENDENT
-        key: fgsw.switch.ports[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Total number of ports discovered for the FortiSwitch.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.port_total
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 9306761af7d940e8a390b4b19611393e
-        name: 'FortiSwitch [{#SWNAME}]: Ports up'
-        type: DEPENDENT
-        key: fgsw.switch.ports_up[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Count of switch ports currently reported up by the controller, when available.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.port_up
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: 5483758dd0ca410f862b279a73b287f7
-        name: 'FortiSwitch [{#SWNAME}]: Ports down'
-        type: DEPENDENT
-        key: fgsw.switch.ports_down[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Count of switch ports currently reported down by the controller, when available.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.port_down
-        tags:
-        - tag: component
-          value: switch
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      - uuid: da4dc623368045f1ade05107aad93f3f
-        name: 'FortiSwitch [{#SWNAME}]: Description'
-        type: DEPENDENT
-        key: fgsw.switch.description[{#SWKEY}]
-        delay: '0'
-        master_item:
-          key: fgsw.switch.get_data[{#SWKEY}]
-        description: Description or comments configured on the managed FortiSwitch.
-        value_type: TEXT
-        trends: '0'
-        history: 7d
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.description
-        tags:
-        - tag: component
-          value: system
-        - tag: switch
-          value: '{#SWNAME}'
-        - tag: switch_group
-          value: '{#SWGROUP}'
-      trigger_prototypes:
-      - uuid: 47cfd56595f74343984685c80f8bf854
-        expression: last(/FortiSwitch by FortiGate HTTP/fgsw.switch.state[{#SWKEY}])=0
-        name: FortiSwitch [{#SWNAME}] is down
-        opdata: 'Current state: {ITEM.LASTVALUE1}'
-        priority: AVERAGE
-        description: The managed FortiSwitch is reported as down by the normalized controller API response.
-        tags:
-        - tag: scope
-          value: availability
-      graph_prototypes:
-      - uuid: cdf7f422e1d44037840dcfe5463b4762
-        name: 'FortiSwitch [{#SWNAME}]: Port states'
-        graph_items:
+        - tag: target
+          value: fortinet
+        - tag: target
+          value: fortiswitch
+      macros:
+        - macro: '{$FGATE.API.FQDN}'
+          description: 'FortiGate API FQDN/IP (ex. ngfw.example.com).'
+        - macro: '{$FGATE.API.PORT}'
+          value: '443'
+          description: 'The port of FortiGate API endpoint.'
+        - macro: '{$FGATE.API.TOKEN}'
+          type: SECRET_TEXT
+          description: 'FortiGate API token.'
+        - macro: '{$FGATE.DATA.TIMEOUT}'
+          value: 15s
+          description: 'Response timeout for an API.'
+        - macro: '{$FGATE.HTTP.PROXY}'
+          description: 'HTTP proxy for API requests.'
+        - macro: '{$FGATE.SCHEME}'
+          value: https
+          description: 'Request scheme for the FortiGate API. Use https for current FortiOS versions.'
+        - macro: '{$FGATE.SW.CPU.WARN}'
+          value: '80'
+          description: 'Warning threshold (percent) for FortiSwitch CPU usage.'
+        - macro: '{$FGATE.SW.MEM.WARN}'
+          value: '80'
+          description: 'Warning threshold (percent) for FortiSwitch memory usage.'
+        - macro: '{$FGATE.SW.POE.USG.WARN}'
+          value: '70'
+          description: 'Warning threshold (percent) for FortiSwitch PoE usage relative to its budget.'
+        - macro: '{$FGATE.SW.PORT.SEND.ERRORS.WARN}'
+          value: '2'
+          description: 'Warning threshold for sustained outbound packet errors per minute on a switch port.'
+        - macro: '{$FGATE.SW.PORT.SPEED.MAX}'
+          value: '1000'
+          description: 'Port speed in Mbps used for the bandwidth utilization triggers. Override per port with {$FGATE.SW.PORT.SPEED.MAX:"port1"}.'
+      dashboards:
+        - uuid: 04a595351be84a569d65fa3d630ca19e
+          name: 'FortiSwitch: General'
+          pages:
+            - name: Overview
+              widgets:
+                - type: item
+                  width: '12'
+                  hide_header: 'YES'
+                  fields:
+                    - type: STRING
+                      name: bg_color
+                      value: FFCA28
+                    - type: STRING
+                      name: description
+                      value: API
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: STRING
+                      name: desc_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: desc_v_pos
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.api.status
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: value_size
+                      value: '35'
+                - type: gauge
+                  name: 'Connected switch ratio'
+                  'y': '2'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: '{ITEM.DESCRIPTION}'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '8'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.switch.connected_pct
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '70'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '90'
+                    - type: INTEGER
+                      name: th_show_arc
+                      value: '1'
+                    - type: INTEGER
+                      name: th_show_labels
+                      value: '1'
+                    - type: STRING
+                      name: units
+                      value: '%'
+                    - type: INTEGER
+                      name: units_size
+                      value: '15'
+                    - type: INTEGER
+                      name: value_size
+                      value: '15'
+                - type: graph
+                  'y': '6'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch: Managed switch state counts'
+                    - type: STRING
+                      name: reference
+                      value: FSWG1
+                - type: problems
+                  'y': '11'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: FSWP1
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                    - type: STRING
+                      name: tag_priority
+                      value: scope
+                - type: item
+                  name: 'Managed switch count'
+                  x: '12'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.switch.count
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: item
+                  name: 'Connected switches'
+                  x: '24'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.switch.connected
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 0EC9AC
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: gauge
+                  name: 'Ports up ratio'
+                  x: '24'
+                  'y': '2'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: '{ITEM.DESCRIPTION}'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '8'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.port.up_pct
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '70'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '90'
+                    - type: INTEGER
+                      name: th_show_arc
+                      value: '1'
+                    - type: INTEGER
+                      name: th_show_labels
+                      value: '1'
+                    - type: STRING
+                      name: units
+                      value: '%'
+                    - type: INTEGER
+                      name: units_size
+                      value: '15'
+                    - type: INTEGER
+                      name: value_size
+                      value: '15'
+                - type: item
+                  name: 'Not connected switches'
+                  x: '36'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.switch.not_connected
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: FF465C
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: graph
+                  x: '36'
+                  'y': '6'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch: Port state counts'
+                    - type: STRING
+                      name: reference
+                      value: FSWG2
+                - type: item
+                  name: 'Total ports'
+                  x: '48'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.port.total
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: item
+                  name: 'Ports down'
+                  x: '48'
+                  'y': '2'
+                  width: '24'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.port.down
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: FF465C
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: item
+                  name: 'Ports up'
+                  x: '60'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        key: fgsw.port.up
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 0EC9AC
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+        - uuid: e9c7583383c54082a69867f33f7537a3
+          name: 'FortiSwitch: Statistics'
+          pages:
+            - name: 'Per-switch statistics'
+              widgets:
+                - type: graphprototype
+                  width: '36'
+                  height: '7'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch [{#SWNAME}]: Port states'
+                    - type: STRING
+                      name: reference
+                      value: FSWC1
+                - type: graph
+                  'y': '7'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch: Managed switch state counts'
+                    - type: STRING
+                      name: reference
+                      value: FSWC3
+                - type: graphprototype
+                  x: '36'
+                  width: '36'
+                  height: '7'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch [{#SWNAME}]: Runtime state'
+                    - type: STRING
+                      name: reference
+                      value: FSWC2
+                - type: graph
+                  x: '36'
+                  'y': '7'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiSwitch by FortiGate HTTP'
+                        name: 'FortiSwitch: Port state counts'
+                    - type: STRING
+                      name: reference
+                      value: FSWC4
+      valuemaps:
+        - uuid: f9bc4700a9b941638bf22851106eb65c
+          name: 'Fortinet managed device state'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+            - value: '2'
+              newvalue: unknown
+        - uuid: f78cb6da96ca4688afa2f2921853a70a
+          name: 'Service state'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+  graphs:
+    - uuid: 95f19307d78848ea8ad3c2c7533cf305
+      name: 'FortiSwitch: Managed switch state counts'
+      graph_items:
+        - color: 1E88E5
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.count
+        - sortorder: '1'
+          color: 199C0D
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.connected
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.not_connected
+    - uuid: 9bdb1dba3d1a4661a23416285f70c4bd
+      name: 'FortiSwitch: Port state counts'
+      graph_items:
         - drawtype: GRADIENT_LINE
           color: 1E88E5
           item:
-            host: FortiSwitch by FortiGate HTTP
-            key: fgsw.switch.ports[{#SWKEY}]
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.total
         - sortorder: '1'
           drawtype: BOLD_LINE
           color: 199C0D
           item:
-            host: FortiSwitch by FortiGate HTTP
-            key: fgsw.switch.ports_up[{#SWKEY}]
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.up
         - sortorder: '2'
           drawtype: BOLD_LINE
           color: F63100
           item:
-            host: FortiSwitch by FortiGate HTTP
-            key: fgsw.switch.ports_down[{#SWKEY}]
-      - uuid: bd26e98bb6984fa385cf53f1a81bf498
-        name: 'FortiSwitch [{#SWNAME}]: Runtime state'
-        graph_items:
-        - color: 199C0D
-          item:
-            host: FortiSwitch by FortiGate HTTP
-            key: fgsw.switch.state[{#SWKEY}]
-    tags:
-    - tag: class
-      value: network
-    - tag: target
-      value: fortiswitch
-    - tag: target
-      value: fortinet
-    macros:
-    - macro: '{$FGATE.API.FQDN}'
-      description: FortiGate API FQDN/IP (ex. ngfw.example.com).
-    - macro: '{$FGATE.API.PORT}'
-      value: '443'
-      description: The port of FortiGate API endpoint.
-    - macro: '{$FGATE.API.TOKEN}'
-      type: SECRET_TEXT
-      description: FortiGate API token.
-    - macro: '{$FGATE.DATA.TIMEOUT}'
-      value: 15s
-      description: Response timeout for an API.
-    - macro: '{$FGATE.HTTP.PROXY}'
-      description: HTTP proxy for API requests.
-    - macro: '{$FGATE.SCHEME}'
-      value: https
-      description: Request scheme for the FortiGate API. Use https for current FortiOS versions.
-    valuemaps:
-    - uuid: f78cb6da96ca4688afa2f2921853a70a
-      name: Service state
-      mappings:
-      - value: '0'
-        newvalue: down
-      - value: '1'
-        newvalue: up
-    - uuid: f9bc4700a9b941638bf22851106eb65c
-      name: Fortinet managed device state
-      mappings:
-      - value: '0'
-        newvalue: down
-      - value: '1'
-        newvalue: up
-      - value: '2'
-        newvalue: unknown
-    dashboards:
-    - uuid: 04a595351be84a569d65fa3d630ca19e
-      name: 'FortiSwitch: General'
-      pages:
-      - name: Overview
-        widgets:
-        - type: item
-          x: '0'
-          y: '0'
-          width: '12'
-          hide_header: 'YES'
-          fields:
-          - type: STRING
-            name: bg_color
-            value: FFCA28
-          - type: STRING
-            name: description
-            value: API
-          - type: INTEGER
-            name: desc_bold
-            value: '1'
-          - type: STRING
-            name: desc_color
-            value: FFFFFF
-          - type: INTEGER
-            name: desc_v_pos
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.api.status
-          - type: INTEGER
-            name: show.0
-            value: '1'
-          - type: INTEGER
-            name: show.1
-            value: '2'
-          - type: STRING
-            name: thresholds.0.color
-            value: FF465C
-          - type: STRING
-            name: thresholds.0.threshold
-            value: '0'
-          - type: STRING
-            name: thresholds.1.color
-            value: 0EC9AC
-          - type: STRING
-            name: thresholds.1.threshold
-            value: '1'
-          - type: STRING
-            name: value_color
-            value: FFFFFF
-          - type: INTEGER
-            name: value_size
-            value: '35'
-        - type: item
-          x: '12'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.switch.count
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 1E88E5
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Managed switch count
-        - type: item
-          x: '24'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.switch.connected
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 0EC9AC
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Connected switches
-        - type: item
-          x: '36'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.switch.not_connected
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: FF465C
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Not connected switches
-        - type: item
-          x: '48'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.port.total
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 1E88E5
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Total ports
-        - type: item
-          x: '60'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.port.up
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 0EC9AC
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Ports up
-        - type: gauge
-          x: '0'
-          y: '2'
-          width: '24'
-          height: '4'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: STRING
-            name: description
-            value: '{ITEM.DESCRIPTION}'
-          - type: INTEGER
-            name: desc_size
-            value: '8'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.switch.connected_pct
-          - type: STRING
-            name: thresholds.0.color
-            value: FF465C
-          - type: STRING
-            name: thresholds.0.threshold
-            value: '0'
-          - type: STRING
-            name: thresholds.1.color
-            value: FFD54F
-          - type: STRING
-            name: thresholds.1.threshold
-            value: '70'
-          - type: STRING
-            name: thresholds.2.color
-            value: 0EC9AC
-          - type: STRING
-            name: thresholds.2.threshold
-            value: '90'
-          - type: INTEGER
-            name: th_show_arc
-            value: '1'
-          - type: INTEGER
-            name: th_show_labels
-            value: '1'
-          - type: STRING
-            name: units
-            value: '%'
-          - type: INTEGER
-            name: units_size
-            value: '15'
-          - type: INTEGER
-            name: value_size
-            value: '15'
-          name: Connected switch ratio
-        - type: gauge
-          x: '24'
-          y: '2'
-          width: '24'
-          height: '4'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: STRING
-            name: description
-            value: '{ITEM.DESCRIPTION}'
-          - type: INTEGER
-            name: desc_size
-            value: '8'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.port.up_pct
-          - type: STRING
-            name: thresholds.0.color
-            value: FF465C
-          - type: STRING
-            name: thresholds.0.threshold
-            value: '0'
-          - type: STRING
-            name: thresholds.1.color
-            value: FFD54F
-          - type: STRING
-            name: thresholds.1.threshold
-            value: '70'
-          - type: STRING
-            name: thresholds.2.color
-            value: 0EC9AC
-          - type: STRING
-            name: thresholds.2.threshold
-            value: '90'
-          - type: INTEGER
-            name: th_show_arc
-            value: '1'
-          - type: INTEGER
-            name: th_show_labels
-            value: '1'
-          - type: STRING
-            name: units
-            value: '%'
-          - type: INTEGER
-            name: units_size
-            value: '15'
-          - type: INTEGER
-            name: value_size
-            value: '15'
-          name: Ports up ratio
-        - type: item
-          x: '48'
-          y: '2'
-          width: '24'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              key: fgsw.port.down
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: FF465C
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Ports down
-        - type: graph
-          x: '0'
-          y: '6'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch: Managed switch state counts'
-          - type: STRING
-            name: reference
-            value: FSWG1
-        - type: graph
-          x: '36'
-          y: '6'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch: Port state counts'
-          - type: STRING
-            name: reference
-            value: FSWG2
-        - type: problems
-          x: '0'
-          y: '11'
-          width: '72'
-          height: '5'
-          fields:
-          - type: INTEGER
-            name: acknowledgement_status
-            value: '1'
-          - type: STRING
-            name: reference
-            value: FSWP1
-          - type: INTEGER
-            name: show
-            value: '3'
-          - type: INTEGER
-            name: show_opdata
-            value: '2'
-          - type: INTEGER
-            name: show_tags
-            value: '1'
-          - type: STRING
-            name: tag_priority
-            value: scope
-    - uuid: e9c7583383c54082a69867f33f7537a3
-      name: 'FortiSwitch: Statistics'
-      pages:
-      - name: Per-switch statistics
-        widgets:
-        - type: graphprototype
-          x: '0'
-          y: '0'
-          width: '36'
-          height: '7'
-          fields:
-          - type: INTEGER
-            name: columns
-            value: '1'
-          - type: GRAPH_PROTOTYPE
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch [{#SWNAME}]: Port states'
-          - type: STRING
-            name: reference
-            value: FSWC1
-        - type: graphprototype
-          x: '36'
-          y: '0'
-          width: '36'
-          height: '7'
-          fields:
-          - type: INTEGER
-            name: columns
-            value: '1'
-          - type: GRAPH_PROTOTYPE
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch [{#SWNAME}]: Runtime state'
-          - type: STRING
-            name: reference
-            value: FSWC2
-        - type: graph
-          x: '0'
-          y: '7'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch: Managed switch state counts'
-          - type: STRING
-            name: reference
-            value: FSWC3
-        - type: graph
-          x: '36'
-          y: '7'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiSwitch by FortiGate HTTP
-              name: 'FortiSwitch: Port state counts'
-          - type: STRING
-            name: reference
-            value: FSWC4
-  graphs:
-  - uuid: 95f19307d78848ea8ad3c2c7533cf305
-    name: 'FortiSwitch: Managed switch state counts'
-    graph_items:
-    - color: 1E88E5
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.count
-    - sortorder: '1'
-      color: 199C0D
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.connected
-    - sortorder: '2'
-      color: F63100
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.not_connected
-  - uuid: 9bdb1dba3d1a4661a23416285f70c4bd
-    name: 'FortiSwitch: Port state counts'
-    graph_items:
-    - drawtype: GRADIENT_LINE
-      color: 1E88E5
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.total
-    - sortorder: '1'
-      drawtype: BOLD_LINE
-      color: 199C0D
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.up
-    - sortorder: '2'
-      drawtype: BOLD_LINE
-      color: F63100
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.down
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.down

@@ -1,1612 +1,1913 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-  - uuid: df97989912ff40919985d25706920120
-    name: Fortinet Office Network
-  - uuid: 41d23565286045a6855bdf9b7c52dc87
-    name: Templates/Network devices
+    - uuid: df97989912ff40919985d25706920120
+      name: 'Fortinet Office Network'
+    - uuid: 41d23565286045a6855bdf9b7c52dc87
+      name: 'Templates/Network devices'
   templates:
-  - uuid: 12cc788d218d4af5ac8df7f6b02ac40a
-    template: FortiAP by FortiGate HTTP
-    name: FortiAP by FortiGate HTTP
-    description: |-
-      Updated template for monitoring FortiAP devices that are managed by a FortiGate controller.
-
-      This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
-      It reuses the same controller-side macros:
-      - {$FGATE.API.FQDN}
-      - {$FGATE.API.PORT}
-      - {$FGATE.API.TOKEN}
-      - {$FGATE.SCHEME}
-      - {$FGATE.DATA.TIMEOUT}
-      - {$FGATE.HTTP.PROXY}
-
-      This revision prefers the FortiGate monitor endpoint for managed AP runtime information and augments it with:
-      - CMDB wireless-controller wtp data for configured values
-      - WiFi client data for per-AP client counts and signal/SNR averages
-
-      Normalized per-AP fields returned by the master item:
-      - serial
-      - name
-      - model
-      - ip
-      - profile
-      - admin_state
-      - version
-      - state_raw
-      - state_num
-      - client_count
-      - signal_avg
-      - snr_avg
-      - radios_seen
-      - location
-      - description
-
-
-      This revision also adds aggregate count/quality items, graph prototypes, and dashboard pages for overview and per-AP statistics.
-    vendor:
-      name: Keberneth
-      version: '7.0.1.2'
-    groups:
-    - name: Fortinet Office Network
-    - name: Templates/Network devices
-    items:
-    - uuid: 207db1d1b59046eba2b4cae0944b7ba1
-      name: Get managed FortiAP data
-      type: SCRIPT
-      key: fap.aps.get_data
-      delay: 5m
-      history: '0'
-      value_type: TEXT
-      trends: '0'
-      params: |2
-            var params = JSON.parse(value),
-                request = new HttpRequest(),
-                result = {"ok": 0, "data": [], "error": ""},
-                api_url = "",
-                error_msg = "";
-
-            function isObject(v) {
-                return typeof v === 'object' && v !== null && !Array.isArray(v);
-            }
-
-            function safeText(v) {
-                return (typeof v === 'undefined' || v === null) ? '' : String(v);
-            }
-
-            function clean(v) {
-                return safeText(v).replace(/^\s+|\s+$/g, '');
-            }
-
-            function first(obj, keys, def) {
-                var i, key;
-                if (!isObject(obj)) {
+    - uuid: 12cc788d218d4af5ac8df7f6b02ac40a
+      template: 'FortiAP by FortiGate HTTP'
+      name: 'FortiAP by FortiGate HTTP'
+      description: |
+        Updated template for monitoring FortiAP devices that are managed by a FortiGate controller.
+        
+        This template is intended to be linked to the same FortiGate host that already uses your FortiGate by HTTP template.
+        It reuses the same controller-side macros:
+        - {$FGATE.API.FQDN}
+        - {$FGATE.API.PORT}
+        - {$FGATE.API.TOKEN}
+        - {$FGATE.SCHEME}
+        - {$FGATE.DATA.TIMEOUT}
+        - {$FGATE.HTTP.PROXY}
+        
+        This revision prefers the FortiGate monitor endpoint for managed AP runtime information and augments it with:
+        - CMDB wireless-controller wtp data for configured values
+        - WiFi client data for per-AP client counts and signal/SNR averages
+        
+        Normalized per-AP fields returned by the master item:
+        - serial
+        - name
+        - model
+        - ip
+        - profile
+        - admin_state
+        - version
+        - state_raw
+        - state_num
+        - client_count
+        - signal_avg
+        - snr_avg
+        - radios_seen
+        - location
+        - description
+        
+        
+        This revision also adds aggregate count/quality items, graph prototypes, and dashboard pages for overview and per-AP statistics.
+      vendor:
+        name: Keberneth
+        version: 7.0.3
+      groups:
+        - name: 'Fortinet Office Network'
+        - name: 'Templates/Network devices'
+      items:
+        - uuid: c312fa99510941789a433d37fb1c757c
+          name: 'Managed FortiAP connected'
+          type: DEPENDENT
+          key: fap.ap.connected
+          delay: '0'
+          description: 'Number of managed FortiAP devices with a normalized state of up.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: c9114ee78a5b4c939209c36fb8740e72
+          name: 'Managed FortiAP connected (%)'
+          type: DEPENDENT
+          key: fap.ap.connected_pct
+          delay: '0'
+          value_type: FLOAT
+          units: '%'
+          description: 'Percentage of managed FortiAP devices currently normalized as up.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: e7d9b6cab4974a9e92199d0d43646500
+          name: 'Managed FortiAP count'
+          type: DEPENDENT
+          key: fap.ap.count
+          delay: '0'
+          description: 'Number of FortiAP devices returned by the controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data.length()
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: 3e26c24fd51b4332854c42c89de822a4
+          name: 'Managed FortiAP not connected'
+          type: DEPENDENT
+          key: fap.ap.not_connected
+          delay: '0'
+          description: 'Number of managed FortiAP devices not currently normalized as up. This includes down or unknown states.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: 29536b5c3a4741509a8b9c6671caa825
+          name: 'FortiAP with clients'
+          type: DEPENDENT
+          key: fap.ap.with_clients
+          delay: '0'
+          description: 'Number of managed FortiAP devices currently serving one or more clients.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.filter(function (v) { return Number(v.client_count || 0) > 0; }).length;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: 7971abdce459447c9cebb7e02cb436ce
+          name: 'API availability status'
+          type: DEPENDENT
+          key: fap.api.status
+          delay: '0'
+          description: 'Checking API availability by normalized response.'
+          valuemap:
+            name: 'Service state'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ok
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: fap.aps.get_data
+          tags:
+            - tag: component
+              value: health
+          triggers:
+            - uuid: be0960fbe833420188fb601cfe4245cf
+              expression: 'last(/FortiAP by FortiGate HTTP/fap.api.status)=0'
+              name: 'Unexpected response from API'
+              priority: AVERAGE
+              description: 'Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 207db1d1b59046eba2b4cae0944b7ba1
+          name: 'Get managed FortiAP data'
+          type: SCRIPT
+          key: fap.aps.get_data
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |2
+                var params = JSON.parse(value),
+                    request = new HttpRequest(),
+                    result = {"ok": 0, "data": [], "rogue_count": 0, "error": ""},
+                    api_url = "",
+                    error_msg = "";
+            
+                function isObject(v) {
+                    return typeof v === 'object' && v !== null && !Array.isArray(v);
+                }
+            
+                function safeText(v) {
+                    return (typeof v === 'undefined' || v === null) ? '' : String(v);
+                }
+            
+                function clean(v) {
+                    return safeText(v).replace(/^\s+|\s+$/g, '');
+                }
+            
+                function first(obj, keys, def) {
+                    var i, key;
+                    if (!isObject(obj)) {
+                        return def;
+                    }
+                    for (i = 0; i < keys.length; i++) {
+                        key = keys[i];
+                        if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
+                            return obj[key];
+                        }
+                    }
                     return def;
                 }
-                for (i = 0; i < keys.length; i++) {
-                    key = keys[i];
-                    if (typeof obj[key] !== 'undefined' && obj[key] !== null && obj[key] !== '') {
-                        return obj[key];
+            
+                function arrify(response) {
+                    var cands = ['results', 'result', 'data', 'entries'],
+                        i, r, out;
+            
+                    if (Array.isArray(response)) {
+                        return response;
                     }
-                }
-                return def;
-            }
-
-            function arrify(response) {
-                var cands = ['results', 'result', 'data', 'entries'],
-                    i, r, out;
-
-                if (Array.isArray(response)) {
-                    return response;
-                }
-
-                if (!isObject(response)) {
+            
+                    if (!isObject(response)) {
+                        return [];
+                    }
+            
+                    for (i = 0; i < cands.length; i++) {
+                        r = response[cands[i]];
+                        if (Array.isArray(r)) {
+                            return r;
+                        }
+                        if (isObject(r)) {
+                            out = [];
+                            Object.keys(r).forEach(function (k) {
+                                var item = r[k];
+                                if (!isObject(item)) {
+                                    item = {"value": item};
+                                }
+                                if (typeof item.__key === 'undefined') {
+                                    item.__key = k;
+                                }
+                                out.push(item);
+                            });
+                            return out;
+                        }
+                    }
+            
                     return [];
                 }
-
-                for (i = 0; i < cands.length; i++) {
-                    r = response[cands[i]];
-                    if (Array.isArray(r)) {
-                        return r;
+            
+                function getHttpData(url) {
+                    var response;
+            
+                    response = request.get(url);
+                    Zabbix.log(4, '[ FortiAP by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            
+                    if (request.getStatus() !== 200) {
+                        throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
                     }
-                    if (isObject(r)) {
-                        out = [];
-                        Object.keys(r).forEach(function (k) {
-                            var item = r[k];
-                            if (!isObject(item)) {
-                                item = {"value": item};
-                            }
-                            if (typeof item.__key === 'undefined') {
-                                item.__key = k;
-                            }
-                            out.push(item);
-                        });
-                        return out;
+            
+                    if (response !== null && response !== '') {
+                        try {
+                            response = JSON.parse(response);
+                        }
+                        catch (error) {
+                            throw 'Failed to parse response received from FortiGate API.';
+                        }
                     }
-                }
-
-                return [];
-            }
-
-            function getHttpData(url) {
-                var response;
-
-                response = request.get(url);
-                Zabbix.log(4, '[ FortiAP by FortiGate HTTP ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
-
-                if (request.getStatus() !== 200) {
-                    throw 'Failed to receive data: invalid response status code ' + request.getStatus() + '.';
-                }
-
-                if (response !== null && response !== '') {
-                    try {
-                        response = JSON.parse(response);
+            
+                    if (!isObject(response) && !Array.isArray(response)) {
+                        throw 'Cannot process response data: received data is not an object.';
                     }
-                    catch (error) {
-                        throw 'Failed to parse response received from FortiGate API.';
+            
+                    return response;
+                }
+            
+                function queryUrls(urls) {
+                    var i, last_error = '';
+                    for (i = 0; i < urls.length; i++) {
+                        try {
+                            return getHttpData(urls[i]);
+                        }
+                        catch (error) {
+                            last_error = error.toString();
+                        }
                     }
+                    throw last_error;
                 }
-
-                if (!isObject(response) && !Array.isArray(response)) {
-                    throw 'Cannot process response data: received data is not an object.';
+            
+                function isMeaningfulString(s) {
+                    return s !== '' && !/^(?:0|1|true|false|null|n\/a)$/i.test(s);
                 }
-
-                return response;
-            }
-
-            function queryUrls(urls) {
-                var i, last_error = '';
-                for (i = 0; i < urls.length; i++) {
-                    try {
-                        return getHttpData(urls[i]);
+            
+                function likelyVersion(s) {
+                    return /(?:^|[\s-])v?\d+\.\d+(?:\.\d+)?(?:\s*\(\d+\))?/i.test(s) ||
+                           /\bbuild\b/i.test(s) ||
+                           /\bGA\b/i.test(s) ||
+                           /-v\d+\.\d+\.\d+/i.test(s);
+                }
+            
+                function deriveApModelFromSerial(serial) {
+                    var s = clean(serial),
+                        m = s.match(/^FP(\d+)([A-Z0-9])/i);
+            
+                    if (m) {
+                        return 'FortiAP ' + m[1] + m[2];
                     }
-                    catch (error) {
-                        last_error = error.toString();
+            
+                    return '';
+                }
+            
+                function normalizeVersion(obj) {
+                    var keys = ['image_version', 'image-version', 'version', 'wtp_version', 'wtp-version', 'os_version', 'os-version', 'version_str', 'version-str', 'firmware', 'firmware_version', 'firmware-version', 'active_sw_ver', 'active sw ver', 'firmware-provision'],
+                        i, s, best = '';
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (!isMeaningfulString(s)) {
+                            continue;
+                        }
+                        if (likelyVersion(s)) {
+                            return s;
+                        }
+                        if (best === '' && /[A-Za-z]/.test(s)) {
+                            best = s;
+                        }
                     }
+            
+                    return best;
                 }
-                throw last_error;
-            }
-
-            function isMeaningfulString(s) {
-                return s !== '' && !/^(?:0|1|true|false|null|n\/a)$/i.test(s);
-            }
-
-            function likelyVersion(s) {
-                return /(?:^|[\s-])v?\d+\.\d+(?:\.\d+)?(?:\s*\(\d+\))?/i.test(s) ||
-                       /\bbuild\b/i.test(s) ||
-                       /\bGA\b/i.test(s) ||
-                       /-v\d+\.\d+\.\d+/i.test(s);
-            }
-
-            function deriveApModelFromSerial(serial) {
-                var s = clean(serial),
-                    m = s.match(/^FP(\d+)([A-Z0-9])/i);
-
-                if (m) {
-                    return 'FortiAP ' + m[1] + m[2];
-                }
-
-                return '';
-            }
-
-            function normalizeVersion(obj) {
-                var keys = ['image_version', 'image-version', 'version', 'wtp_version', 'wtp-version', 'os_version', 'os-version', 'version_str', 'version-str', 'firmware', 'firmware_version', 'firmware-version', 'active_sw_ver', 'active sw ver', 'firmware-provision'],
-                    i, s, best = '';
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (!isMeaningfulString(s)) {
-                        continue;
+            
+                function normalizeModel(obj, serial) {
+                    var keys = ['model', 'wtp_model', 'wtp-model', 'platform', 'platform_str', 'platform-str', 'boardid'],
+                        i, s;
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s)) {
+                            return s;
+                        }
                     }
-                    if (likelyVersion(s)) {
-                        return s;
+            
+                    return deriveApModelFromSerial(serial);
+                }
+            
+                function normalizeName(obj) {
+                    var serial = clean(first(obj, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', 'id'], '')),
+                        keys = ['wtp_name', 'wtp-name', 'name', 'hostname'],
+                        i, s;
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s) && s !== serial) {
+                            return s;
+                        }
                     }
-                    if (best === '' && /[A-Za-z]/.test(s)) {
-                        best = s;
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(obj, [keys[i]], ''));
+                        if (isMeaningfulString(s)) {
+                            return s;
+                        }
                     }
+            
+                    return serial;
                 }
-
-                return best;
-            }
-
-            function normalizeModel(obj, serial) {
-                var keys = ['model', 'wtp_model', 'wtp-model', 'platform', 'platform_str', 'platform-str', 'boardid'],
-                    i, s;
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s)) {
-                        return s;
-                    }
+            
+                function normalizeIp(obj) {
+                    return clean(first(obj, ['wtp_ip', 'ip', 'ip-address', 'ip_addr', 'ip-addr', 'local_ip', 'local-ip', 'address'], ''));
                 }
-
-                return deriveApModelFromSerial(serial);
-            }
-
-            function normalizeName(obj) {
-                var serial = clean(first(obj, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', 'id'], '')),
-                    keys = ['wtp_name', 'wtp-name', 'name', 'hostname'],
-                    i, s;
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s) && s !== serial) {
-                        return s;
-                    }
+            
+                function normalizeProfile(obj) {
+                    return clean(first(obj, ['wtp-profile', 'wtp_profile', 'apcfg-profile', 'apcfg_profile', 'profile'], ''));
                 }
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(obj, [keys[i]], ''));
-                    if (isMeaningfulString(s)) {
-                        return s;
-                    }
+            
+                function normalizeAdmin(obj) {
+                    return clean(first(obj, ['admin', 'admin_state', 'admin-state'], ''));
                 }
-
-                return serial;
-            }
-
-            function normalizeIp(obj) {
-                return clean(first(obj, ['wtp_ip', 'ip', 'ip-address', 'ip_addr', 'ip-addr', 'local_ip', 'local-ip', 'address'], ''));
-            }
-
-            function normalizeProfile(obj) {
-                return clean(first(obj, ['wtp-profile', 'wtp_profile', 'apcfg-profile', 'apcfg_profile', 'profile'], ''));
-            }
-
-            function normalizeAdmin(obj) {
-                return clean(first(obj, ['admin', 'admin_state', 'admin-state'], ''));
-            }
-
-            function apAliases(v) {
-                var serial = clean(first(v, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', '__key', 'id'], '')),
-                    name = clean(normalizeName(v));
-
-                return [serial, name].filter(function (x, idx, arr) {
-                    return x !== '' && arr.indexOf(x) === idx;
-                });
-            }
-
-            function parseApState(cfg, mon, client_count, monitor_present) {
-                var merged = {},
-                    raw = '',
-                    admin = '',
-                    keys = ['status', 'wtp_status', 'wtp-status', 'connection_state', 'connection-state', 'conn_status', 'conn-status', 'run_state', 'run-state', 'oper_state', 'oper-state', 'state'],
-                    i, s, num = 2,
-                    ip = '',
-                    version = '';
-
-                Object.keys(cfg || {}).forEach(function (k) { merged[k] = cfg[k]; });
-                Object.keys(mon || {}).forEach(function (k) { merged[k] = mon[k]; });
-
-                admin = normalizeAdmin(merged);
-
-                for (i = 0; i < keys.length; i++) {
-                    s = clean(first(merged, [keys[i]], ''));
-                    if (s !== '') {
-                        raw = s;
-                        break;
-                    }
+            
+                function apAliases(v) {
+                    var serial = clean(first(v, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', '__key', 'id'], '')),
+                        name = clean(normalizeName(v));
+            
+                    return [serial, name].filter(function (x, idx, arr) {
+                        return x !== '' && arr.indexOf(x) === idx;
+                    });
                 }
-
-                if (/(online|up|connected|present|joined|healthy|active)/i.test(raw)) {
-                    num = 1;
-                }
-                else if (/(offline|down|disconnected|missing|dead|lost|error|failed)/i.test(raw)) {
-                    num = 0;
-                }
-                else if (/disable/i.test(admin)) {
-                    raw = raw === '' ? 'disabled' : raw;
-                    num = 0;
-                }
-
-                ip = normalizeIp(merged);
-                version = normalizeVersion(merged);
-
-                if (num === 2 && client_count > 0) {
-                    raw = raw === '' ? 'client-detected' : raw;
-                    num = 1;
-                }
-                else if (num === 2 && monitor_present && (ip !== '' || version !== '')) {
-                    raw = raw === '' ? 'online' : raw;
-                    num = 1;
-                }
-                else if (num === 2 && !monitor_present && !/disable/i.test(admin)) {
-                    raw = raw === '' ? 'offline' : raw;
-                    num = 0;
-                }
-                else if (num === 2 && ip !== '' && admin !== '') {
-                    raw = raw === '' ? 'online' : raw;
-                    num = 1;
-                }
-
-                if (raw === '') {
-                    raw = num === 1 ? 'up' : (num === 0 ? 'down' : 'unknown');
-                }
-
-                return {"raw": raw, "num": num};
-            }
-
-            try {
-                ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-                    var macro = '{$FGATE.' + field.toUpperCase() + '}';
-                    var key = field.split('.').pop();
-
-                    if (typeof params[key] === 'undefined') {
-                        throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
-                    }
-
-                    if (params[key] === macro || params[key] === '') {
-                        throw 'Please change ' + macro + ' macro to the proper value.';
-                    }
-                });
-
-                if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
-                    request.setProxy(params.http_proxy);
-                }
-
-                api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
-
-                var cmdb_resp = null,
-                    managed_resp = null,
-                    client_resp = null,
-                    partial_errors = [],
-                    devices = {},
-                    alias_to_key = {};
-
-                try {
-                    cmdb_resp = getHttpData(
-                        api_url + '/api/v2/cmdb/wireless-controller/wtp?access_token=' + encodeURIComponent(params.token)
-                    );
-                }
-                catch (error) {
-                    partial_errors.push('cmdb wtp endpoint failed: ' + error);
-                }
-
-                try {
-                    managed_resp = queryUrls([
-                        api_url + '/api/v2/monitor/wifi/managed_ap?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
-                        api_url + '/api/v2/monitor/wifi/managed_ap/select?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
-                        api_url + '/api/v2/monitor/wifi/managed_ap?access_token=' + encodeURIComponent(params.token),
-                        api_url + '/api/v2/monitor/wifi/managed_ap/select?access_token=' + encodeURIComponent(params.token)
-                    ]);
-                }
-                catch (error) {
-                    partial_errors.push('monitor managed_ap endpoint failed: ' + error);
-                }
-
-                try {
-                    client_resp = queryUrls([
-                        api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token) + '&global=1&start=0&count=1000',
-                        api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token) + '&global=1&start=0&count=1000',
-                        api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token) + '&global=1',
-                        api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token) + '&global=1',
-                        api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token),
-                        api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token)
-                    ]);
-                }
-                catch (error) {
-                    partial_errors.push('wifi client endpoint failed: ' + error);
-                }
-
-                if (cmdb_resp === null && managed_resp === null && client_resp === null) {
-                    throw partial_errors.join(' ');
-                }
-
-                function resolveKey(v) {
-                    var aliases = apAliases(v),
-                        key = '',
-                        i;
-
-                    for (i = 0; i < aliases.length; i++) {
-                        if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
-                            key = alias_to_key[aliases[i]];
+            
+                function parseApState(cfg, mon, client_count, monitor_present) {
+                    var merged = {},
+                        raw = '',
+                        admin = '',
+                        keys = ['status', 'wtp_status', 'wtp-status', 'connection_state', 'connection-state', 'conn_status', 'conn-status', 'run_state', 'run-state', 'oper_state', 'oper-state', 'state'],
+                        i, s, num = 2,
+                        ip = '',
+                        version = '';
+            
+                    Object.keys(cfg || {}).forEach(function (k) { merged[k] = cfg[k]; });
+                    Object.keys(mon || {}).forEach(function (k) { merged[k] = mon[k]; });
+            
+                    admin = normalizeAdmin(merged);
+            
+                    for (i = 0; i < keys.length; i++) {
+                        s = clean(first(merged, [keys[i]], ''));
+                        if (s !== '') {
+                            raw = s;
                             break;
                         }
                     }
-
-                    if (key === '') {
-                        key = aliases.length > 0 ? aliases[0] : '';
+            
+                    if (/(online|up|connected|present|joined|healthy|active)/i.test(raw)) {
+                        num = 1;
                     }
-
-                    if (key === '') {
-                        return '';
+                    else if (/(offline|down|disconnected|missing|dead|lost|error|failed)/i.test(raw)) {
+                        num = 0;
                     }
-
-                    aliases.forEach(function (a) {
-                        alias_to_key[a] = key;
-                    });
-
-                    return key;
+                    else if (/disable/i.test(admin)) {
+                        raw = raw === '' ? 'disabled' : raw;
+                        num = 0;
+                    }
+            
+                    ip = normalizeIp(merged);
+                    version = normalizeVersion(merged);
+            
+                    if (num === 2 && client_count > 0) {
+                        raw = raw === '' ? 'client-detected' : raw;
+                        num = 1;
+                    }
+                    else if (num === 2 && monitor_present && (ip !== '' || version !== '')) {
+                        raw = raw === '' ? 'online' : raw;
+                        num = 1;
+                    }
+                    else if (num === 2 && !monitor_present && !/disable/i.test(admin)) {
+                        raw = raw === '' ? 'offline' : raw;
+                        num = 0;
+                    }
+                    else if (num === 2 && ip !== '' && admin !== '') {
+                        raw = raw === '' ? 'online' : raw;
+                        num = 1;
+                    }
+            
+                    if (raw === '') {
+                        raw = num === 1 ? 'up' : (num === 0 ? 'down' : 'unknown');
+                    }
+            
+                    return {"raw": raw, "num": num};
                 }
-
-                arrify(cmdb_resp || {}).forEach(function (item) {
-                    var key;
-                    if (!isObject(item)) {
-                        return;
+            
+                try {
+                    ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+                        var macro = '{$FGATE.' + field.toUpperCase() + '}';
+                        var key = field.split('.').pop();
+            
+                        if (typeof params[key] === 'undefined') {
+                            throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+                        }
+            
+                        if (params[key] === macro || params[key] === '') {
+                            throw 'Please change ' + macro + ' macro to the proper value.';
+                        }
+                    });
+            
+                    if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+                        request.setProxy(params.http_proxy);
                     }
-
-                    key = resolveKey(item);
-                    if (key === '') {
-                        return;
+            
+                    api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+            
+                    var cmdb_resp = null,
+                        managed_resp = null,
+                        client_resp = null,
+                        rogue_resp = null,
+                        partial_errors = [],
+                        devices = {},
+                        alias_to_key = {};
+            
+                    try {
+                        cmdb_resp = getHttpData(
+                            api_url + '/api/v2/cmdb/wireless-controller/wtp?access_token=' + encodeURIComponent(params.token)
+                        );
                     }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+                    catch (error) {
+                        partial_errors.push('cmdb wtp endpoint failed: ' + error);
                     }
-
-                    devices[key].cfg = item;
-                });
-
-                arrify(managed_resp || {}).forEach(function (item) {
-                    var key;
-                    if (!isObject(item)) {
-                        return;
+            
+                    try {
+                        managed_resp = queryUrls([
+                            api_url + '/api/v2/monitor/wifi/managed_ap?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/managed_ap/select?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/managed_ap?access_token=' + encodeURIComponent(params.token),
+                            api_url + '/api/v2/monitor/wifi/managed_ap/select?access_token=' + encodeURIComponent(params.token)
+                        ]);
                     }
-
-                    key = resolveKey(item);
-                    if (key === '') {
-                        return;
+                    catch (error) {
+                        partial_errors.push('monitor managed_ap endpoint failed: ' + error);
                     }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+            
+                    try {
+                        client_resp = queryUrls([
+                            api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token) + '&global=1&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token) + '&global=1&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token) + '&global=1',
+                            api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token) + '&global=1',
+                            api_url + '/api/v2/monitor/wifi/client?access_token=' + encodeURIComponent(params.token),
+                            api_url + '/api/v2/monitor/wifi/client/select?access_token=' + encodeURIComponent(params.token)
+                        ]);
                     }
-
-                    devices[key].mon = item;
-                    devices[key].monitor_present = true;
-                });
-
-                arrify(client_resp || {}).forEach(function (client) {
-                    var serial = clean(first(client, ['wtp_id', 'wtp-id', 'serial'], '')),
-                        name = clean(first(client, ['wtp_name', 'wtp-name', 'name'], '')),
-                        key = '';
-
-                    if (serial !== '' && typeof alias_to_key[serial] !== 'undefined') {
-                        key = alias_to_key[serial];
+                    catch (error) {
+                        partial_errors.push('wifi client endpoint failed: ' + error);
                     }
-                    else if (name !== '' && typeof alias_to_key[name] !== 'undefined') {
-                        key = alias_to_key[name];
+            
+                    try {
+                        rogue_resp = queryUrls([
+                            api_url + '/api/v2/monitor/wifi/rogue_ap?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/rogue_ap/select?access_token=' + encodeURIComponent(params.token) + '&start=0&count=1000',
+                            api_url + '/api/v2/monitor/wifi/rogue_ap?access_token=' + encodeURIComponent(params.token),
+                            api_url + '/api/v2/monitor/wifi/rogue_ap/select?access_token=' + encodeURIComponent(params.token)
+                        ]);
                     }
-                    else {
-                        key = serial !== '' ? serial : name;
+                    catch (error) {
+                        partial_errors.push('rogue_ap endpoint failed: ' + error);
                     }
-
-                    if (key === '') {
-                        return;
+            
+                    if (cmdb_resp === null && managed_resp === null && client_resp === null && rogue_resp === null) {
+                        throw partial_errors.join(' ');
                     }
-
-                    if (typeof devices[key] === 'undefined') {
-                        devices[key] = {"cfg": {"wtp_id": serial, "name": name}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+            
+                    function resolveKey(v) {
+                        var aliases = apAliases(v),
+                            key = '',
+                            i;
+            
+                        for (i = 0; i < aliases.length; i++) {
+                            if (aliases[i] !== '' && typeof alias_to_key[aliases[i]] !== 'undefined') {
+                                key = alias_to_key[aliases[i]];
+                                break;
+                            }
+                        }
+            
+                        if (key === '') {
+                            key = aliases.length > 0 ? aliases[0] : '';
+                        }
+            
+                        if (key === '') {
+                            return '';
+                        }
+            
+                        aliases.forEach(function (a) {
+                            alias_to_key[a] = key;
+                        });
+            
+                        return key;
                     }
-
-                    if (serial !== '') {
-                        alias_to_key[serial] = key;
-                    }
-                    if (name !== '') {
-                        alias_to_key[name] = key;
-                    }
-
-                    devices[key].clients.count += 1;
-
-                    var signal = Number(first(client, ['signal'], ''));
-                    if (!isNaN(signal)) {
-                        devices[key].clients.signal_sum += signal;
-                        devices[key].clients.signal_n += 1;
-                    }
-
-                    var snr = Number(first(client, ['snr'], ''));
-                    if (!isNaN(snr)) {
-                        devices[key].clients.snr_sum += snr;
-                        devices[key].clients.snr_n += 1;
-                    }
-
-                    var radio = clean(first(client, ['wtp_radio', 'radio_id'], ''));
-                    if (radio !== '') {
-                        devices[key].clients.radios[radio] = true;
-                    }
-
-                    if (normalizeIp(devices[key].mon) === '' && clean(first(client, ['wtp_ip'], '')) !== '') {
-                        devices[key].mon.wtp_ip = first(client, ['wtp_ip'], '');
-                    }
-                });
-
-                result.data = Object.keys(devices).map(function (k) {
-                    var cfg = devices[k].cfg || {},
-                        mon = devices[k].mon || {},
-                        clients = devices[k].clients || {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}},
-                        merged = {},
-                        serial,
-                        state,
-                        signal_avg = clients.signal_n > 0 ? (clients.signal_sum / clients.signal_n) : 0,
-                        snr_avg = clients.snr_n > 0 ? (clients.snr_sum / clients.snr_n) : 0;
-
-                    Object.keys(cfg).forEach(function (x) { merged[x] = cfg[x]; });
-                    Object.keys(mon).forEach(function (x) { merged[x] = mon[x]; });
-
-                    serial = clean(first(merged, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', 'id'], k));
-                    state = parseApState(cfg, mon, clients.count, devices[k].monitor_present);
-
-                    return {
-                        "key": k,
-                        "serial": serial,
-                        "name": clean(normalizeName(merged)),
-                        "model": clean(normalizeModel(merged, serial)),
-                        "ip": normalizeIp(merged),
-                        "profile": normalizeProfile(merged),
-                        "admin_state": normalizeAdmin(merged),
-                        "version": clean(normalizeVersion(merged)),
-                        "state_raw": state.raw,
-                        "state_num": state.num,
-                        "client_count": clients.count,
-                        "signal_avg": signal_avg,
-                        "snr_avg": snr_avg,
-                        "radios_seen": Object.keys(clients.radios).length,
-                        "location": clean(first(merged, ['location'], '')),
-                        "description": clean(first(merged, ['description', 'comments'], ''))
-                    };
-                });
-
-                result.data.sort(function (a, b) {
-                    if (a.name < b.name) {
-                        return -1;
-                    }
-                    if (a.name > b.name) {
-                        return 1;
-                    }
-                    return 0;
-                });
-
-                result.ok = 1;
-                        result.error = '';
-            }
-            catch (error) {
-                error_msg = error.toString();
-                error_msg += error_msg.endsWith('.') ? '' : '.';
-                Zabbix.log(3, '[ FortiAP by FortiGate HTTP ] ERROR: ' + error_msg);
-                result.error = error_msg;
-            }
-
-            return JSON.stringify(result);
-      description: Item for gathering managed FortiAP inventory, runtime status, and wireless client statistics from the FortiGate API.
-      timeout: '{$FGATE.DATA.TIMEOUT}'
-      parameters:
-      - name: fqdn
-        value: '{$FGATE.API.FQDN}'
-      - name: http_proxy
-        value: '{$FGATE.HTTP.PROXY}'
-      - name: port
-        value: '{$FGATE.API.PORT}'
-      - name: scheme
-        value: '{$FGATE.SCHEME}'
-      - name: token
-        value: '{$FGATE.API.TOKEN}'
+            
+                    arrify(cmdb_resp || {}).forEach(function (item) {
+                        var key;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+                        }
+            
+                        devices[key].cfg = item;
+                    });
+            
+                    arrify(managed_resp || {}).forEach(function (item) {
+                        var key;
+                        if (!isObject(item)) {
+                            return;
+                        }
+            
+                        key = resolveKey(item);
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+                        }
+            
+                        devices[key].mon = item;
+                        devices[key].monitor_present = true;
+                    });
+            
+                    arrify(client_resp || {}).forEach(function (client) {
+                        var serial = clean(first(client, ['wtp_id', 'wtp-id', 'serial'], '')),
+                            name = clean(first(client, ['wtp_name', 'wtp-name', 'name'], '')),
+                            key = '';
+            
+                        if (serial !== '' && typeof alias_to_key[serial] !== 'undefined') {
+                            key = alias_to_key[serial];
+                        }
+                        else if (name !== '' && typeof alias_to_key[name] !== 'undefined') {
+                            key = alias_to_key[name];
+                        }
+                        else {
+                            key = serial !== '' ? serial : name;
+                        }
+            
+                        if (key === '') {
+                            return;
+                        }
+            
+                        if (typeof devices[key] === 'undefined') {
+                            devices[key] = {"cfg": {"wtp_id": serial, "name": name}, "mon": {}, "monitor_present": false, "clients": {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}}};
+                        }
+            
+                        if (serial !== '') {
+                            alias_to_key[serial] = key;
+                        }
+                        if (name !== '') {
+                            alias_to_key[name] = key;
+                        }
+            
+                        devices[key].clients.count += 1;
+            
+                        var signal = Number(first(client, ['signal'], ''));
+                        if (!isNaN(signal)) {
+                            devices[key].clients.signal_sum += signal;
+                            devices[key].clients.signal_n += 1;
+                        }
+            
+                        var snr = Number(first(client, ['snr'], ''));
+                        if (!isNaN(snr)) {
+                            devices[key].clients.snr_sum += snr;
+                            devices[key].clients.snr_n += 1;
+                        }
+            
+                        var radio = clean(first(client, ['wtp_radio', 'radio_id'], ''));
+                        if (radio !== '') {
+                            devices[key].clients.radios[radio] = true;
+                        }
+            
+                        if (normalizeIp(devices[key].mon) === '' && clean(first(client, ['wtp_ip'], '')) !== '') {
+                            devices[key].mon.wtp_ip = first(client, ['wtp_ip'], '');
+                        }
+                    });
+            
+                    result.data = Object.keys(devices).map(function (k) {
+                        var cfg = devices[k].cfg || {},
+                            mon = devices[k].mon || {},
+                            clients = devices[k].clients || {"count": 0, "signal_sum": 0, "signal_n": 0, "snr_sum": 0, "snr_n": 0, "radios": {}},
+                            merged = {},
+                            serial,
+                            state,
+                            signal_avg = clients.signal_n > 0 ? (clients.signal_sum / clients.signal_n) : 0,
+                            snr_avg = clients.snr_n > 0 ? (clients.snr_sum / clients.snr_n) : 0,
+                            cpu_raw,
+                            mem_free_raw,
+                            mem_total_raw,
+                            last_reboot_raw,
+                            health_overall = '',
+                            health_node;
+            
+                        Object.keys(cfg).forEach(function (x) { merged[x] = cfg[x]; });
+                        Object.keys(mon).forEach(function (x) { merged[x] = mon[x]; });
+            
+                        serial = clean(first(merged, ['wtp_id', 'wtp-id', 'serial', 'q_origin_key', 'id'], k));
+                        state = parseApState(cfg, mon, clients.count, devices[k].monitor_present);
+            
+                        cpu_raw = Number(first(merged, ['cpu_usage', 'cpu-usage'], 0));
+                        mem_free_raw = Number(first(merged, ['mem_free', 'mem-free'], 0));
+                        mem_total_raw = Number(first(merged, ['mem_total', 'mem-total'], 0));
+                        last_reboot_raw = Number(first(merged, ['last_reboot_time_raw', 'last-reboot-time-raw', 'last_reboot_time', 'last-reboot-time'], 0));
+            
+                        health_node = first(merged, ['health'], null);
+                        if (isObject(health_node) && isObject(health_node.general) && isObject(health_node.general.overall)) {
+                            health_overall = clean(safeText(health_node.general.overall.severity));
+                        }
+            
+                        return {
+                            "key": k,
+                            "serial": serial,
+                            "name": clean(normalizeName(merged)),
+                            "model": clean(normalizeModel(merged, serial)),
+                            "ip": normalizeIp(merged),
+                            "profile": normalizeProfile(merged),
+                            "admin_state": normalizeAdmin(merged),
+                            "version": clean(normalizeVersion(merged)),
+                            "state_raw": state.raw,
+                            "state_num": state.num,
+                            "client_count": clients.count,
+                            "signal_avg": signal_avg,
+                            "snr_avg": snr_avg,
+                            "radios_seen": Object.keys(clients.radios).length,
+                            "location": clean(first(merged, ['location'], '')),
+                            "description": clean(first(merged, ['description', 'comments'], '')),
+                            "cpu_usage": isNaN(cpu_raw) ? 0 : cpu_raw,
+                            "mem_free": isNaN(mem_free_raw) ? 0 : mem_free_raw,
+                            "mem_total": isNaN(mem_total_raw) ? 0 : mem_total_raw,
+                            "last_reboot": isNaN(last_reboot_raw) ? 0 : last_reboot_raw,
+                            "last_failure": clean(first(merged, ['last_failure', 'last-failure'], '')),
+                            "override_profile": clean(first(merged, ['override_profile', 'override-profile'], '')),
+                            "region": clean(first(merged, ['region'], '')),
+                            "health_overall": health_overall
+                        };
+                    });
+            
+                    result.rogue_count = arrify(rogue_resp || {}).length;
+            
+                    result.data.sort(function (a, b) {
+                        if (a.name < b.name) {
+                            return -1;
+                        }
+                        if (a.name > b.name) {
+                            return 1;
+                        }
+                        return 0;
+                    });
+            
+                    result.ok = 1;
+                            result.error = '';
+                }
+                catch (error) {
+                    error_msg = error.toString();
+                    error_msg += error_msg.endsWith('.') ? '' : '.';
+                    Zabbix.log(3, '[ FortiAP by FortiGate HTTP ] ERROR: ' + error_msg);
+                    result.error = error_msg;
+                }
+            
+                return JSON.stringify(result);
+          description: 'Item for gathering managed FortiAP inventory, runtime status, and wireless client statistics from the FortiGate API.'
+          timeout: '{$FGATE.DATA.TIMEOUT}'
+          parameters:
+            - name: fqdn
+              value: '{$FGATE.API.FQDN}'
+            - name: http_proxy
+              value: '{$FGATE.HTTP.PROXY}'
+            - name: port
+              value: '{$FGATE.API.PORT}'
+            - name: scheme
+              value: '{$FGATE.SCHEME}'
+            - name: token
+              value: '{$FGATE.API.TOKEN}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: c2219d652275494e8e0425fb3b9b9938
+          name: 'Wireless client count'
+          type: DEPENDENT
+          key: fap.client.count
+          delay: '0'
+          description: 'Total wireless clients associated with the managed FortiAP devices.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.client_count || 0); }, 0);'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: c94b95046fa9487b93445d88f07dfe5b
+          name: 'Average wireless client signal'
+          type: DEPENDENT
+          key: fap.client.signal_avg
+          delay: '0'
+          value_type: FLOAT
+          units: dBm
+          description: 'Weighted average signal level of all associated wireless clients across managed FortiAP devices.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.signal_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: f1ca62c2f7a34fa19104db0cb71376f5
+          name: 'Average wireless client SNR'
+          type: DEPENDENT
+          key: fap.client.snr_avg
+          delay: '0'
+          value_type: FLOAT
+          units: dB
+          description: 'Weighted average SNR of all associated wireless clients across managed FortiAP devices.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.snr_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+        - uuid: 941b9c02afcf49f490845150cdeb09c5
+          name: 'Master metric item errors'
+          type: DEPENDENT
+          key: fap.data_errors
+          delay: '0'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Item for gathering errors of the master metric.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: CUSTOM_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+          tags:
+            - tag: component
+              value: error
+          triggers:
+            - uuid: 00d631352e494196a5c1af53e6a11767
+              expression: 'length(last(/FortiAP by FortiGate HTTP/fap.data_errors))>0'
+              name: 'There are errors in the master metric'
+              priority: WARNING
+              dependencies:
+                - name: 'Unexpected response from API'
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.api.status)=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 5712bc8f93db4a6aa57d57bbb1c44cfd
+          name: 'Rogue AP count'
+          type: DEPENDENT
+          key: fap.rogue.count
+          delay: '0'
+          description: 'Number of detected rogue APs reported by the FortiGate controller.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.rogue_count
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fap.aps.get_data
+          tags:
+            - tag: component
+              value: AP
+          triggers:
+            - uuid: 6c8717ab58764959bb61d08603b52c0e
+              expression: 'last(/FortiAP by FortiGate HTTP/fap.rogue.count,#1) > last(/FortiAP by FortiGate HTTP/fap.rogue.count,#2)'
+              recovery_mode: NONE
+              name: 'Rogue AP count increased'
+              priority: WARNING
+              description: 'Number of rogue APs reported by the controller has grown since the previous check. Manual close.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: security
+      discovery_rules:
+        - uuid: 6f854768315143b0b54faf7a2bd45b47
+          name: 'Managed FortiAP discovery'
+          type: DEPENDENT
+          key: fap.ap.discovery
+          delay: '0'
+          description: 'Discovery of FortiAP devices managed by the FortiGate.'
+          item_prototypes:
+            - uuid: eec5fb02c32a4271a8eb34ce0c17eeb2
+              name: 'FortiAP [{#APNAME}]: Admin state'
+              type: DEPENDENT
+              key: 'fap.ap.admin[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Administrative state of the managed FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.admin_state
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: 08a57a6db83042898c928d613e8c4020
+              name: 'FortiAP [{#APNAME}]: Client count'
+              type: DEPENDENT
+              key: 'fap.ap.clients[{#APKEY}]'
+              delay: '0'
+              description: 'Number of currently associated wireless clients for this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.client_count
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+              trigger_prototypes:
+                - uuid: ab7cd16e224944a38ffc957018757bd7
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.clients[{#APKEY}])>{$FGATE.AP.CLIENT.WARN}'
+                  name: 'FortiAP [{#APNAME}]: Connected clients too high'
+                  opdata: 'Clients: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Connected wireless clients on this FortiAP exceeded the warning threshold.'
+                  tags:
+                    - tag: scope
+                      value: capacity
+            - uuid: 0af9b7f402bc4192a0a927849e219e80
+              name: 'FortiAP [{#APNAME}]: Description'
+              type: DEPENDENT
+              key: 'fap.ap.description[{#APKEY}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Configured FortiAP description or comments when available from CMDB.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.description
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: system
+            - uuid: 784e721e3d2e409fadd0d023c78439d7
+              name: 'FortiAP [{#APNAME}]: Get data'
+              type: DEPENDENT
+              key: 'fap.ap.get_data[{#APKEY}]'
+              delay: '0'
+              history: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Item for gathering normalized data for the managed FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: component
+                  value: raw
+            - uuid: 60f71381537a4f9e86bb7046f5b31075
+              name: 'FortiAP [{#APNAME}]: Health general overall'
+              type: DEPENDENT
+              key: 'fap.ap.health[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Overall health severity reported by the controller for this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.health_overall
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: health
+              trigger_prototypes:
+                - uuid: 937710158b38405bac6afb3df15b83a0
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.health[{#APKEY}],#1)<>"good" and last(/FortiAP by FortiGate HTTP/fap.ap.health[{#APKEY}],#2)<>"good" and length(last(/FortiAP by FortiGate HTTP/fap.ap.health[{#APKEY}]))>0'
+                  name: 'FortiAP [{#APNAME}]: Health general overall is not good'
+                  opdata: 'Health: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'Two consecutive non-good health readings from the controller.'
+                  dependencies:
+                    - name: 'FortiAP [{#APNAME}] is down'
+                      expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.state[{#APKEY}])=0'
+                  tags:
+                    - tag: scope
+                      value: health
+            - uuid: 6068b7f881614e88b61778dc2af43417
+              name: 'FortiAP [{#APNAME}]: IP address'
+              type: DEPENDENT
+              key: 'fap.ap.ip[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Management IP address of the FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ip
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: network
+            - uuid: cab9fb3c97e5499a9b6191058e5e182b
+              name: 'FortiAP [{#APNAME}]: Location'
+              type: DEPENDENT
+              key: 'fap.ap.location[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Configured FortiAP location when available from CMDB.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.location
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: system
+            - uuid: 239111a13bc44281961f0b1351a8bc20
+              name: 'FortiAP [{#APNAME}]: Model'
+              type: DEPENDENT
+              key: 'fap.ap.model[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Model of the managed FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.model
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: system
+            - uuid: 917c3157485041f3b4b5ceb4afda7938
+              name: 'FortiAP [{#APNAME}]: Profile'
+              type: DEPENDENT
+              key: 'fap.ap.profile[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Assigned FortiAP profile.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.profile
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: 9044e7d501f8428c9c3aa61acd6f1fe3
+              name: 'FortiAP [{#APNAME}]: Radios seen'
+              type: DEPENDENT
+              key: 'fap.ap.radios_seen[{#APKEY}]'
+              delay: '0'
+              description: 'Count of radios observed in monitor/client data for this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.radios_seen
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: a8508771e5f9472d8cd94006b3072a96
+              name: 'FortiAP [{#APNAME}]: Serial number'
+              type: DEPENDENT
+              key: 'fap.ap.serial[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'FortiAP serial number.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.serial
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: system
+            - uuid: 484cbe1108f64af5ac2c912339fa222f
+              name: 'FortiAP [{#APNAME}]: Average client signal'
+              type: DEPENDENT
+              key: 'fap.ap.signal_avg[{#APKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: dBm
+              description: 'Average signal level of associated clients connected through this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.signal_avg
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: 70f6ce9f228b49fe9e12bf639a11d532
+              name: 'FortiAP [{#APNAME}]: Average client SNR'
+              type: DEPENDENT
+              key: 'fap.ap.snr_avg[{#APKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: dB
+              description: 'Average SNR of associated clients connected through this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.snr_avg
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: 4f6e42c757964f1eb33e8776b934b9ac
+              name: 'FortiAP [{#APNAME}]: State'
+              type: DEPENDENT
+              key: 'fap.ap.state[{#APKEY}]'
+              delay: '0'
+              description: 'Normalized runtime state of the managed FortiAP.'
+              valuemap:
+                name: 'Fortinet managed device state'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_num
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+              trigger_prototypes:
+                - uuid: 2fc893f93e71479199b47a21283bca85
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.state[{#APKEY}])=0'
+                  name: 'FortiAP [{#APNAME}] is down'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: AVERAGE
+                  description: 'The managed FortiAP is reported as down by the normalized controller API response.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 14f541071c5748559914bed464bc6510
+              name: 'FortiAP [{#APNAME}]: State raw'
+              type: DEPENDENT
+              key: 'fap.ap.state_raw[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Raw runtime state string of the managed FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.state_raw
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: wireless
+            - uuid: 868e66bd30fe4781910a3d524a02b156
+              name: 'FortiAP [{#APNAME}]: Firmware version'
+              type: DEPENDENT
+              key: 'fap.ap.version[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Runtime firmware version of the managed FortiAP if returned by the controller API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.version
+              master_item:
+                key: 'fap.ap.get_data[{#APKEY}]'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: system
+          graph_prototypes:
+            - uuid: 5d05f0a36137437c8e08f74547d217d5
+              name: 'FortiAP [{#APNAME}]: Client count'
+              graph_items:
+                - color: 199C0D
+                  item:
+                    host: 'FortiAP by FortiGate HTTP'
+                    key: 'fap.ap.clients[{#APKEY}]'
+            - uuid: ed2f32432b0a4d5994a26739d9e3b9a6
+              name: 'FortiAP [{#APNAME}]: Radio quality'
+              graph_items:
+                - drawtype: GRADIENT_LINE
+                  color: F7941D
+                  item:
+                    host: 'FortiAP by FortiGate HTTP'
+                    key: 'fap.ap.signal_avg[{#APKEY}]'
+                - sortorder: '1'
+                  drawtype: BOLD_LINE
+                  color: 199C0D
+                  yaxisside: RIGHT
+                  item:
+                    host: 'FortiAP by FortiGate HTTP'
+                    key: 'fap.ap.snr_avg[{#APKEY}]'
+          master_item:
+            key: fap.aps.get_data
+          lld_macro_paths:
+            - lld_macro: '{#APIP}'
+              path: $.ip
+            - lld_macro: '{#APKEY}'
+              path: $.key
+            - lld_macro: '{#APMODEL}'
+              path: $.model
+            - lld_macro: '{#APNAME}'
+              path: $.name
+            - lld_macro: '{#APSERIAL}'
+              path: $.serial
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 6h
+        - uuid: f482c1cb1075492fb5aa44c8eb2e0065
+          name: 'FortiAP Operations discovery'
+          type: DEPENDENT
+          key: fap.ap.ops.discovery
+          delay: '0'
+          description: 'Discovery of operational metrics for managed FortiAPs (CPU, memory, uptime, last reboot/failure, override profile, region).'
+          item_prototypes:
+            - uuid: 47af72d8d7194691abcf3f7a3deaad2d
+              name: 'FortiAP [{#APNAME}]: CPU usage'
+              type: DEPENDENT
+              key: 'fap.ap.cpu[{#APKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              description: 'Current CPU usage of the managed FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].cpu_usage.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+              trigger_prototypes:
+                - uuid: 6294e67c609f47bba3f4c33519c6728a
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.cpu[{#APKEY}])>{$FGATE.AP.CPU.WARN}'
+                  name: 'FortiAP [{#APNAME}]: CPU usage is too high'
+                  opdata: 'Current CPU: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'CPU usage on the FortiAP is above the warning threshold.'
+                  tags:
+                    - tag: scope
+                      value: performance
+            - uuid: 6f5d57002a7d4789947b46041889a080
+              name: 'FortiAP [{#APNAME}]: Last failure'
+              type: DEPENDENT
+              key: 'fap.ap.last_failure[{#APKEY}]'
+              delay: '0'
+              history: 7d
+              value_type: TEXT
+              trends: '0'
+              description: 'Most recent failure reason reported by the controller for this FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].last_failure.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: b01ebebf53854904b3535a5ee2aae98e
+              name: 'FortiAP [{#APNAME}]: Last reboot'
+              type: DEPENDENT
+              key: 'fap.ap.last_reboot[{#APKEY}]'
+              delay: '0'
+              units: unixtime
+              description: 'Unix timestamp of the most recent reboot reported by the controller.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].last_reboot.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: 40ce20a7e4034b55b3efdb9f57adad65
+              name: 'FortiAP [{#APNAME}]: Memory free'
+              type: DEPENDENT
+              key: 'fap.ap.mem_free[{#APKEY}]'
+              delay: '0'
+              units: B
+              description: 'Free memory currently reported by the FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].mem_free.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: 4317fcd706774e19afc43889d3410b60
+              name: 'FortiAP [{#APNAME}]: Memory total'
+              type: DEPENDENT
+              key: 'fap.ap.mem_total[{#APKEY}]'
+              delay: '0'
+              units: B
+              description: 'Total memory reported by the FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].mem_total.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: 92c2007a4dd84abfa3726fea6d1fc5fd
+              name: 'FortiAP [{#APNAME}]: Override profile'
+              type: DEPENDENT
+              key: 'fap.ap.override_profile[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Whether the AP is using an override profile.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].override_profile.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: 8099363e8cc34730b21548f0082358bc
+              name: 'FortiAP [{#APNAME}]: Region'
+              type: DEPENDENT
+              key: 'fap.ap.region[{#APKEY}]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Regulatory region configured on the FortiAP.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].region.first()'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+            - uuid: 2fa724cb464c439aa4d37dcffa25cf26
+              name: 'FortiAP [{#APNAME}]: Uptime'
+              type: CALCULATED
+              key: 'fap.ap.uptime[{#APKEY}]'
+              delay: 3m
+              units: s
+              params: 'now() - last(//fap.ap.last_reboot[{#APKEY}])'
+              description: 'Uptime derived from the last reboot timestamp.'
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+              trigger_prototypes:
+                - uuid: 1d0004f1c081462f82a70b5a1ee59327
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.uptime[{#APKEY}])<10m'
+                  name: 'FortiAP [{#APNAME}]: Has been rebooted'
+                  opdata: 'Uptime: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'The FortiAP rebooted within the last 10 minutes.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: fap.aps.get_data
+          lld_macro_paths:
+            - lld_macro: '{#APIP}'
+              path: $.ip
+            - lld_macro: '{#APKEY}'
+              path: $.key
+            - lld_macro: '{#APMODEL}'
+              path: $.model
+            - lld_macro: '{#APNAME}'
+              path: $.name
+            - lld_macro: '{#APSERIAL}'
+              path: $.serial
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 6h
       tags:
-      - tag: component
-        value: raw
-    - uuid: 7971abdce459447c9cebb7e02cb436ce
-      name: API availability status
-      type: DEPENDENT
-      key: fap.api.status
-      delay: '0'
-      description: Checking API availability by normalized response.
-      valuemap:
-        name: Service state
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.ok
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '0'
-      master_item:
-        key: fap.aps.get_data
-      tags:
-      - tag: component
-        value: health
-      triggers:
-      - uuid: be0960fbe833420188fb601cfe4245cf
-        expression: last(/FortiAP by FortiGate HTTP/fap.api.status)=0
-        name: Unexpected response from API
-        priority: AVERAGE
-        description: Received an unexpected response from API. It may be unavailable or the endpoint may be unsupported by this FortiOS build.
-        tags:
-        - tag: scope
-          value: availability
-    - uuid: 941b9c02afcf49f490845150cdeb09c5
-      name: Master metric item errors
-      type: DEPENDENT
-      key: fap.data_errors
-      delay: '0'
-      value_type: TEXT
-      history: '0'
-      trends: '0'
-      description: Item for gathering errors of the master metric.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.error
-        error_handler: CUSTOM_VALUE
-        error_handler_params: ''
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-      tags:
-      - tag: component
-        value: error
-      triggers:
-      - uuid: 00d631352e494196a5c1af53e6a11767
-        expression: length(last(/FortiAP by FortiGate HTTP/fap.data_errors))>0
-        name: There are errors in the master metric
-        priority: WARNING
-        dependencies:
-        - name: Unexpected response from API
-          expression: last(/FortiAP by FortiGate HTTP/fap.api.status)=0
-        tags:
-        - tag: scope
-          value: availability
-    - uuid: e7d9b6cab4974a9e92199d0d43646500
-      name: Managed FortiAP count
-      type: DEPENDENT
-      key: fap.ap.count
-      delay: '0'
-      description: Number of FortiAP devices returned by the controller.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data.length()
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '0'
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: c2219d652275494e8e0425fb3b9b9938
-      name: Wireless client count
-      type: DEPENDENT
-      key: fap.client.count
-      delay: '0'
-      description: Total wireless clients associated with the managed FortiAP devices.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.reduce(function (acc, v) { return acc + Number(v.client_count || 0); }, 0);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: 29536b5c3a4741509a8b9c6671caa825
-      name: FortiAP with clients
-      type: DEPENDENT
-      key: fap.ap.with_clients
-      delay: '0'
-      description: Number of managed FortiAP devices currently serving one or more clients.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.client_count || 0) > 0; }).length;
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: c312fa99510941789a433d37fb1c757c
-      name: Managed FortiAP connected
-      type: DEPENDENT
-      key: fap.ap.connected
-      delay: '0'
-      master_item:
-        key: fap.aps.get_data
-      description: Number of managed FortiAP devices with a normalized state of up.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) === 1; }).length;
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-    - uuid: 3e26c24fd51b4332854c42c89de822a4
-      name: Managed FortiAP not connected
-      type: DEPENDENT
-      key: fap.ap.not_connected
-      delay: '0'
-      description: Number of managed FortiAP devices not currently normalized as up. This includes down or unknown states.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); return data.filter(function (v) { return Number(v.state_num) !== 1; }).length;
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: c9114ee78a5b4c939209c36fb8740e72
-      name: Managed FortiAP connected (%)
-      type: DEPENDENT
-      key: fap.ap.connected_pct
-      delay: '0'
-      value_type: FLOAT
-      units: '%'
-      description: Percentage of managed FortiAP devices currently normalized as up.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - var data = JSON.parse(value); if (data.length === 0) { return 0; } var up = data.filter(function (v) { return Number(v.state_num) === 1; }).length; return (up * 100 / data.length).toFixed(2);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: c94b95046fa9487b93445d88f07dfe5b
-      name: Average wireless client signal
-      type: DEPENDENT
-      key: fap.client.signal_avg
-      delay: '0'
-      value_type: FLOAT
-      units: dBm
-      description: Weighted average signal level of all associated wireless clients across managed FortiAP devices.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.signal_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    - uuid: f1ca62c2f7a34fa19104db0cb71376f5
-      name: Average wireless client SNR
-      type: DEPENDENT
-      key: fap.client.snr_avg
-      delay: '0'
-      value_type: FLOAT
-      units: dB
-      description: Weighted average SNR of all associated wireless clients across managed FortiAP devices.
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-        error_handler: CUSTOM_VALUE
-        error_handler_params: '[]'
-      - type: JAVASCRIPT
-        parameters:
-        - 'var data = JSON.parse(value), total = 0, count = 0; data.forEach(function (v) { var c = Number(v.client_count || 0), s = Number(v.snr_avg); if (!isNaN(s) && c > 0) { total += s * c; count += c; } }); return count > 0 ? (total / count).toFixed(2) : 0;'
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
-      master_item:
-        key: fap.aps.get_data
-    discovery_rules:
-    - uuid: 6f854768315143b0b54faf7a2bd45b47
-      name: Managed FortiAP discovery
-      type: DEPENDENT
-      key: fap.ap.discovery
-      delay: '0'
-      description: Discovery of FortiAP devices managed by the FortiGate.
-      master_item:
-        key: fap.aps.get_data
-      preprocessing:
-      - type: JSONPATH
-        parameters:
-        - $.data
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 6h
-      lld_macro_paths:
-      - lld_macro: '{#APKEY}'
-        path: $.key
-      - lld_macro: '{#APSERIAL}'
-        path: $.serial
-      - lld_macro: '{#APNAME}'
-        path: $.name
-      - lld_macro: '{#APMODEL}'
-        path: $.model
-      - lld_macro: '{#APIP}'
-        path: $.ip
-      item_prototypes:
-      - uuid: 784e721e3d2e409fadd0d023c78439d7
-        name: 'FortiAP [{#APNAME}]: Get data'
-        type: DEPENDENT
-        key: fap.ap.get_data[{#APKEY}]
-        delay: '0'
-        history: '0'
-        value_type: TEXT
-        trends: '0'
-        description: Item for gathering normalized data for the managed FortiAP.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.data[?(@.key == "{#APKEY}")].first()
-          error_handler: DISCARD_VALUE
-        master_item:
-          key: fap.aps.get_data
-        tags:
-        - tag: component
-          value: raw
-      - uuid: 4f6e42c757964f1eb33e8776b934b9ac
-        name: 'FortiAP [{#APNAME}]: State'
-        type: DEPENDENT
-        key: fap.ap.state[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Normalized runtime state of the managed FortiAP.
-        valuemap:
-          name: Fortinet managed device state
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.state_num
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 14f541071c5748559914bed464bc6510
-        name: 'FortiAP [{#APNAME}]: State raw'
-        type: DEPENDENT
-        key: fap.ap.state_raw[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Raw runtime state string of the managed FortiAP.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.state_raw
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: eec5fb02c32a4271a8eb34ce0c17eeb2
-        name: 'FortiAP [{#APNAME}]: Admin state'
-        type: DEPENDENT
-        key: fap.ap.admin[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Administrative state of the managed FortiAP.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.admin_state
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: a8508771e5f9472d8cd94006b3072a96
-        name: 'FortiAP [{#APNAME}]: Serial number'
-        type: DEPENDENT
-        key: fap.ap.serial[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: FortiAP serial number.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.serial
-        tags:
-        - tag: component
-          value: system
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 6068b7f881614e88b61778dc2af43417
-        name: 'FortiAP [{#APNAME}]: IP address'
-        type: DEPENDENT
-        key: fap.ap.ip[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Management IP address of the FortiAP.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.ip
-        tags:
-        - tag: component
+        - tag: class
           value: network
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 239111a13bc44281961f0b1351a8bc20
-        name: 'FortiAP [{#APNAME}]: Model'
-        type: DEPENDENT
-        key: fap.ap.model[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Model of the managed FortiAP.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.model
-        tags:
-        - tag: component
-          value: system
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 917c3157485041f3b4b5ceb4afda7938
-        name: 'FortiAP [{#APNAME}]: Profile'
-        type: DEPENDENT
-        key: fap.ap.profile[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Assigned FortiAP profile.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.profile
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 868e66bd30fe4781910a3d524a02b156
-        name: 'FortiAP [{#APNAME}]: Firmware version'
-        type: DEPENDENT
-        key: fap.ap.version[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Runtime firmware version of the managed FortiAP if returned by the controller API.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.version
-        tags:
-        - tag: component
-          value: system
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 08a57a6db83042898c928d613e8c4020
-        name: 'FortiAP [{#APNAME}]: Client count'
-        type: DEPENDENT
-        key: fap.ap.clients[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Number of currently associated wireless clients for this FortiAP.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.client_count
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 484cbe1108f64af5ac2c912339fa222f
-        name: 'FortiAP [{#APNAME}]: Average client signal'
-        type: DEPENDENT
-        key: fap.ap.signal_avg[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Average signal level of associated clients connected through this FortiAP.
-        value_type: FLOAT
-        units: dBm
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.signal_avg
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 70f6ce9f228b49fe9e12bf639a11d532
-        name: 'FortiAP [{#APNAME}]: Average client SNR'
-        type: DEPENDENT
-        key: fap.ap.snr_avg[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Average SNR of associated clients connected through this FortiAP.
-        value_type: FLOAT
-        units: dB
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.snr_avg
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 9044e7d501f8428c9c3aa61acd6f1fe3
-        name: 'FortiAP [{#APNAME}]: Radios seen'
-        type: DEPENDENT
-        key: fap.ap.radios_seen[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Count of radios observed in monitor/client data for this FortiAP.
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.radios_seen
-        tags:
-        - tag: component
-          value: wireless
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: cab9fb3c97e5499a9b6191058e5e182b
-        name: 'FortiAP [{#APNAME}]: Location'
-        type: DEPENDENT
-        key: fap.ap.location[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Configured FortiAP location when available from CMDB.
-        value_type: CHAR
-        trends: '0'
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.location
-        tags:
-        - tag: component
-          value: system
-        - tag: ap
-          value: '{#APNAME}'
-      - uuid: 0af9b7f402bc4192a0a927849e219e80
-        name: 'FortiAP [{#APNAME}]: Description'
-        type: DEPENDENT
-        key: fap.ap.description[{#APKEY}]
-        delay: '0'
-        master_item:
-          key: fap.ap.get_data[{#APKEY}]
-        description: Configured FortiAP description or comments when available from CMDB.
-        value_type: TEXT
-        trends: '0'
-        history: 7d
-        preprocessing:
-        - type: JSONPATH
-          parameters:
-          - $.description
-        tags:
-        - tag: component
-          value: system
-        - tag: ap
-          value: '{#APNAME}'
-      trigger_prototypes:
-      - uuid: 2fc893f93e71479199b47a21283bca85
-        expression: last(/FortiAP by FortiGate HTTP/fap.ap.state[{#APKEY}])=0
-        name: FortiAP [{#APNAME}] is down
-        opdata: 'Current state: {ITEM.LASTVALUE1}'
-        priority: AVERAGE
-        description: The managed FortiAP is reported as down by the normalized controller API response.
-        tags:
-        - tag: scope
-          value: availability
-      graph_prototypes:
-      - uuid: 5d05f0a36137437c8e08f74547d217d5
-        name: 'FortiAP [{#APNAME}]: Client count'
-        graph_items:
-        - color: 199C0D
+        - tag: target
+          value: fortiap
+        - tag: target
+          value: fortinet
+      macros:
+        - macro: '{$FGATE.AP.CLIENT.WARN}'
+          value: '100'
+          description: 'Warning threshold for connected clients on a single FortiAP.'
+        - macro: '{$FGATE.AP.CPU.WARN}'
+          value: '80'
+          description: 'Warning threshold (percent) for FortiAP CPU usage.'
+        - macro: '{$FGATE.API.FQDN}'
+          description: 'FortiGate API FQDN/IP (ex. ngfw.example.com).'
+        - macro: '{$FGATE.API.PORT}'
+          value: '443'
+          description: 'The port of FortiGate API endpoint.'
+        - macro: '{$FGATE.API.TOKEN}'
+          type: SECRET_TEXT
+          description: 'FortiGate API token.'
+        - macro: '{$FGATE.DATA.TIMEOUT}'
+          value: 15s
+          description: 'Response timeout for an API.'
+        - macro: '{$FGATE.HTTP.PROXY}'
+          description: 'HTTP proxy for API requests.'
+        - macro: '{$FGATE.SCHEME}'
+          value: https
+          description: 'Request scheme for the FortiGate API. Use https for current FortiOS versions.'
+      dashboards:
+        - uuid: 9909558f931d45439e56847dc1d7b08b
+          name: 'FortiAP: General'
+          pages:
+            - name: Overview
+              widgets:
+                - type: item
+                  width: '12'
+                  hide_header: 'YES'
+                  fields:
+                    - type: STRING
+                      name: bg_color
+                      value: FFCA28
+                    - type: STRING
+                      name: description
+                      value: API
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: STRING
+                      name: desc_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: desc_v_pos
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.api.status
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: value_size
+                      value: '35'
+                - type: gauge
+                  name: 'Connected AP ratio'
+                  'y': '2'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: '{ITEM.DESCRIPTION}'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '8'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.ap.connected_pct
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '70'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '90'
+                    - type: INTEGER
+                      name: th_show_arc
+                      value: '1'
+                    - type: INTEGER
+                      name: th_show_labels
+                      value: '1'
+                    - type: STRING
+                      name: units
+                      value: '%'
+                    - type: INTEGER
+                      name: units_size
+                      value: '15'
+                    - type: INTEGER
+                      name: value_size
+                      value: '15'
+                - type: graph
+                  'y': '6'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP: Managed AP state counts'
+                    - type: STRING
+                      name: reference
+                      value: FAPG1
+                - type: problems
+                  'y': '11'
+                  width: '72'
+                  height: '5'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: FAPP1
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                    - type: STRING
+                      name: tag_priority
+                      value: scope
+                - type: item
+                  name: 'Managed AP count'
+                  x: '12'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.ap.count
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: item
+                  name: 'Connected APs'
+                  x: '24'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.ap.connected
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 0EC9AC
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: graph
+                  x: '24'
+                  'y': '2'
+                  width: '48'
+                  height: '4'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP: Wireless quality averages'
+                    - type: STRING
+                      name: reference
+                      value: FAPQ1
+                - type: item
+                  name: 'Not connected APs'
+                  x: '36'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.ap.not_connected
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: FF465C
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: graph
+                  x: '36'
+                  'y': '6'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP: Wireless client count'
+                    - type: STRING
+                      name: reference
+                      value: FAPG2
+                - type: item
+                  name: 'APs with clients'
+                  x: '48'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.ap.with_clients
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: F7941D
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+                - type: item
+                  name: 'Wireless clients'
+                  x: '60'
+                  width: '12'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.client.count
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: STRING
+                      name: value_color
+                      value: 6C59DC
+                    - type: INTEGER
+                      name: value_size
+                      value: '50'
+        - uuid: fdd1fdb220114c8c9ad5cacac0d57237
+          name: 'FortiAP: Statistics'
+          pages:
+            - name: 'Per-AP statistics'
+              widgets:
+                - type: graphprototype
+                  width: '36'
+                  height: '7'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP [{#APNAME}]: Client count'
+                    - type: STRING
+                      name: reference
+                      value: FAPC1
+                - type: graph
+                  'y': '7'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP: Wireless quality averages'
+                    - type: STRING
+                      name: reference
+                      value: FAPC3
+                - type: graphprototype
+                  x: '36'
+                  width: '36'
+                  height: '7'
+                  fields:
+                    - type: INTEGER
+                      name: columns
+                      value: '1'
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP [{#APNAME}]: Radio quality'
+                    - type: STRING
+                      name: reference
+                      value: FAPC2
+                - type: graph
+                  x: '36'
+                  'y': '7'
+                  width: '36'
+                  height: '5'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP: Wireless client count'
+                    - type: STRING
+                      name: reference
+                      value: FAPC4
+      valuemaps:
+        - uuid: 3ef57dd7e3dc4000ad4ef403a26b0e28
+          name: 'Fortinet managed device state'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+            - value: '2'
+              newvalue: unknown
+        - uuid: 6ce627e0209f4e42b00f855296b5ae51
+          name: 'Service state'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+  graphs:
+    - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
+      name: 'FortiAP: Managed AP state counts'
+      graph_items:
+        - color: 1E88E5
           item:
-            host: FortiAP by FortiGate HTTP
-            key: fap.ap.clients[{#APKEY}]
-      - uuid: ed2f32432b0a4d5994a26739d9e3b9a6
-        name: 'FortiAP [{#APNAME}]: Radio quality'
-        graph_items:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.count
+        - sortorder: '1'
+          color: 199C0D
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.connected
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.not_connected
+        - sortorder: '3'
+          color: F7941D
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.with_clients
+    - uuid: 15eebea279d94571a5873afeaa6d6919
+      name: 'FortiAP: Wireless client count'
+      graph_items:
+        - color: 6C59DC
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.count
+    - uuid: 0e14e8539bd446218d9dfa5fe6de44be
+      name: 'FortiAP: Wireless quality averages'
+      graph_items:
         - drawtype: GRADIENT_LINE
           color: F7941D
           item:
-            host: FortiAP by FortiGate HTTP
-            key: fap.ap.signal_avg[{#APKEY}]
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.signal_avg
         - sortorder: '1'
           drawtype: BOLD_LINE
           color: 199C0D
           yaxisside: RIGHT
           item:
-            host: FortiAP by FortiGate HTTP
-            key: fap.ap.snr_avg[{#APKEY}]
-    tags:
-    - tag: class
-      value: network
-    - tag: target
-      value: fortiap
-    - tag: target
-      value: fortinet
-    macros:
-    - macro: '{$FGATE.API.FQDN}'
-      description: FortiGate API FQDN/IP (ex. ngfw.example.com).
-    - macro: '{$FGATE.API.PORT}'
-      value: '443'
-      description: The port of FortiGate API endpoint.
-    - macro: '{$FGATE.API.TOKEN}'
-      type: SECRET_TEXT
-      description: FortiGate API token.
-    - macro: '{$FGATE.DATA.TIMEOUT}'
-      value: 15s
-      description: Response timeout for an API.
-    - macro: '{$FGATE.HTTP.PROXY}'
-      description: HTTP proxy for API requests.
-    - macro: '{$FGATE.SCHEME}'
-      value: https
-      description: Request scheme for the FortiGate API. Use https for current FortiOS versions.
-    valuemaps:
-    - uuid: 6ce627e0209f4e42b00f855296b5ae51
-      name: Service state
-      mappings:
-      - value: '0'
-        newvalue: down
-      - value: '1'
-        newvalue: up
-    - uuid: 3ef57dd7e3dc4000ad4ef403a26b0e28
-      name: Fortinet managed device state
-      mappings:
-      - value: '0'
-        newvalue: down
-      - value: '1'
-        newvalue: up
-      - value: '2'
-        newvalue: unknown
-    dashboards:
-    - uuid: 9909558f931d45439e56847dc1d7b08b
-      name: 'FortiAP: General'
-      pages:
-      - name: Overview
-        widgets:
-        - type: item
-          x: '0'
-          y: '0'
-          width: '12'
-          hide_header: 'YES'
-          fields:
-          - type: STRING
-            name: bg_color
-            value: FFCA28
-          - type: STRING
-            name: description
-            value: API
-          - type: INTEGER
-            name: desc_bold
-            value: '1'
-          - type: STRING
-            name: desc_color
-            value: FFFFFF
-          - type: INTEGER
-            name: desc_v_pos
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.api.status
-          - type: INTEGER
-            name: show.0
-            value: '1'
-          - type: INTEGER
-            name: show.1
-            value: '2'
-          - type: STRING
-            name: thresholds.0.color
-            value: FF465C
-          - type: STRING
-            name: thresholds.0.threshold
-            value: '0'
-          - type: STRING
-            name: thresholds.1.color
-            value: 0EC9AC
-          - type: STRING
-            name: thresholds.1.threshold
-            value: '1'
-          - type: STRING
-            name: value_color
-            value: FFFFFF
-          - type: INTEGER
-            name: value_size
-            value: '35'
-        - type: item
-          x: '12'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.ap.count
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 1E88E5
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Managed AP count
-        - type: item
-          x: '24'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.ap.connected
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 0EC9AC
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Connected APs
-        - type: item
-          x: '36'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.ap.not_connected
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: FF465C
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Not connected APs
-        - type: item
-          x: '48'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.ap.with_clients
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: F7941D
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: APs with clients
-        - type: item
-          x: '60'
-          y: '0'
-          width: '12'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.client.count
-          - type: INTEGER
-            name: show.0
-            value: '2'
-          - type: INTEGER
-            name: units_show
-            value: '0'
-          - type: STRING
-            name: value_color
-            value: 6C59DC
-          - type: INTEGER
-            name: value_size
-            value: '50'
-          name: Wireless clients
-        - type: gauge
-          x: '0'
-          y: '2'
-          width: '24'
-          height: '4'
-          fields:
-          - type: INTEGER
-            name: decimal_places
-            value: '0'
-          - type: STRING
-            name: description
-            value: '{ITEM.DESCRIPTION}'
-          - type: INTEGER
-            name: desc_size
-            value: '8'
-          - type: ITEM
-            name: itemid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              key: fap.ap.connected_pct
-          - type: STRING
-            name: thresholds.0.color
-            value: FF465C
-          - type: STRING
-            name: thresholds.0.threshold
-            value: '0'
-          - type: STRING
-            name: thresholds.1.color
-            value: FFD54F
-          - type: STRING
-            name: thresholds.1.threshold
-            value: '70'
-          - type: STRING
-            name: thresholds.2.color
-            value: 0EC9AC
-          - type: STRING
-            name: thresholds.2.threshold
-            value: '90'
-          - type: INTEGER
-            name: th_show_arc
-            value: '1'
-          - type: INTEGER
-            name: th_show_labels
-            value: '1'
-          - type: STRING
-            name: units
-            value: '%'
-          - type: INTEGER
-            name: units_size
-            value: '15'
-          - type: INTEGER
-            name: value_size
-            value: '15'
-          name: Connected AP ratio
-        - type: graph
-          x: '24'
-          y: '2'
-          width: '48'
-          height: '4'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP: Wireless quality averages'
-          - type: STRING
-            name: reference
-            value: FAPQ1
-        - type: graph
-          x: '0'
-          y: '6'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP: Managed AP state counts'
-          - type: STRING
-            name: reference
-            value: FAPG1
-        - type: graph
-          x: '36'
-          y: '6'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP: Wireless client count'
-          - type: STRING
-            name: reference
-            value: FAPG2
-        - type: problems
-          x: '0'
-          y: '11'
-          width: '72'
-          height: '5'
-          fields:
-          - type: INTEGER
-            name: acknowledgement_status
-            value: '1'
-          - type: STRING
-            name: reference
-            value: FAPP1
-          - type: INTEGER
-            name: show
-            value: '3'
-          - type: INTEGER
-            name: show_opdata
-            value: '2'
-          - type: INTEGER
-            name: show_tags
-            value: '1'
-          - type: STRING
-            name: tag_priority
-            value: scope
-    - uuid: fdd1fdb220114c8c9ad5cacac0d57237
-      name: 'FortiAP: Statistics'
-      pages:
-      - name: Per-AP statistics
-        widgets:
-        - type: graphprototype
-          x: '0'
-          y: '0'
-          width: '36'
-          height: '7'
-          fields:
-          - type: INTEGER
-            name: columns
-            value: '1'
-          - type: GRAPH_PROTOTYPE
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP [{#APNAME}]: Client count'
-          - type: STRING
-            name: reference
-            value: FAPC1
-        - type: graphprototype
-          x: '36'
-          y: '0'
-          width: '36'
-          height: '7'
-          fields:
-          - type: INTEGER
-            name: columns
-            value: '1'
-          - type: GRAPH_PROTOTYPE
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP [{#APNAME}]: Radio quality'
-          - type: STRING
-            name: reference
-            value: FAPC2
-        - type: graph
-          x: '0'
-          y: '7'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP: Wireless quality averages'
-          - type: STRING
-            name: reference
-            value: FAPC3
-        - type: graph
-          x: '36'
-          y: '7'
-          width: '36'
-          height: '5'
-          fields:
-          - type: GRAPH
-            name: graphid.0
-            value:
-              host: FortiAP by FortiGate HTTP
-              name: 'FortiAP: Wireless client count'
-          - type: STRING
-            name: reference
-            value: FAPC4
-  graphs:
-  - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
-    name: 'FortiAP: Managed AP state counts'
-    graph_items:
-    - color: 1E88E5
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.ap.count
-    - sortorder: '1'
-      color: 199C0D
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.ap.connected
-    - sortorder: '2'
-      color: F63100
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.ap.not_connected
-    - sortorder: '3'
-      color: F7941D
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.ap.with_clients
-  - uuid: 15eebea279d94571a5873afeaa6d6919
-    name: 'FortiAP: Wireless client count'
-    graph_items:
-    - color: 6C59DC
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.client.count
-  - uuid: 0e14e8539bd446218d9dfa5fe6de44be
-    name: 'FortiAP: Wireless quality averages'
-    graph_items:
-    - drawtype: GRADIENT_LINE
-      color: F7941D
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.client.signal_avg
-    - sortorder: '1'
-      drawtype: BOLD_LINE
-      color: 199C0D
-      yaxisside: RIGHT
-      item:
-        host: FortiAP by FortiGate HTTP
-        key: fap.client.snr_avg
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.snr_avg
