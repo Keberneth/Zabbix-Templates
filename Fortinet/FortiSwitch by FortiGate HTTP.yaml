@@ -1,10 +1,10 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-  - uuid: df97989912ff40919985d25706920120
-    name: Fortinet Office Network
-  - uuid: 41d23565286045a6855bdf9b7c52dc87
-    name: Templates/Network devices
+    - uuid: df97989912ff40919985d25706920120
+      name: 'Fortinet Office Network'
+    - uuid: 41d23565286045a6855bdf9b7c52dc87
+      name: 'Templates/Network devices'
   templates:
   - uuid: 3dfc5ac9a74e4269bf29ab7783a33cbc
     template: FortiSwitch by FortiGate HTTP
@@ -3082,40 +3082,40 @@ zabbix_export:
       - value: '1'
         newvalue: up
   graphs:
-  - uuid: 95f19307d78848ea8ad3c2c7533cf305
-    name: 'FortiSwitch: Managed switch state counts'
-    graph_items:
-    - color: 1E88E5
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.count
-    - sortorder: '1'
-      color: 199C0D
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.connected
-    - sortorder: '2'
-      color: F63100
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.switch.not_connected
-  - uuid: 9bdb1dba3d1a4661a23416285f70c4bd
-    name: 'FortiSwitch: Port state counts'
-    graph_items:
-    - drawtype: GRADIENT_LINE
-      color: 1E88E5
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.total
-    - sortorder: '1'
-      drawtype: BOLD_LINE
-      color: 199C0D
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.up
-    - sortorder: '2'
-      drawtype: BOLD_LINE
-      color: F63100
-      item:
-        host: FortiSwitch by FortiGate HTTP
-        key: fgsw.port.down
+    - uuid: 95f19307d78848ea8ad3c2c7533cf305
+      name: 'FortiSwitch: Managed switch state counts'
+      graph_items:
+        - color: 1E88E5
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.count
+        - sortorder: '1'
+          color: 199C0D
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.connected
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.switch.not_connected
+    - uuid: 9bdb1dba3d1a4661a23416285f70c4bd
+      name: 'FortiSwitch: Port state counts'
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 1E88E5
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.total
+        - sortorder: '1'
+          drawtype: BOLD_LINE
+          color: 199C0D
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.up
+        - sortorder: '2'
+          drawtype: BOLD_LINE
+          color: F63100
+          item:
+            host: 'FortiSwitch by FortiGate HTTP'
+            key: fgsw.port.down

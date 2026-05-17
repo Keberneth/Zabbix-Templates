@@ -5,6 +5,10 @@ zabbix_export:
       name: 'Fortinet Office Network'
     - uuid: 41d23565286045a6855bdf9b7c52dc87
       name: 'Templates/Network devices'
+    - uuid: df97989912ff40919985d25706920120
+      name: 'Fortinet Office Network'
+    - uuid: 41d23565286045a6855bdf9b7c52dc87
+      name: 'Templates/Network devices'
   templates:
     - uuid: 12cc788d218d4af5ac8df7f6b02ac40a
       template: 'FortiAP by FortiGate HTTP'
@@ -2781,6 +2785,50 @@ zabbix_export:
             - value: '1'
               newvalue: up
   graphs:
+    - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
+      name: 'FortiAP: Managed AP state counts'
+      graph_items:
+        - color: 1E88E5
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.count
+        - sortorder: '1'
+          color: 199C0D
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.connected
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.not_connected
+        - sortorder: '3'
+          color: F7941D
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.ap.with_clients
+    - uuid: 15eebea279d94571a5873afeaa6d6919
+      name: 'FortiAP: Wireless client count'
+      graph_items:
+        - color: 6C59DC
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.count
+    - uuid: 0e14e8539bd446218d9dfa5fe6de44be
+      name: 'FortiAP: Wireless quality averages'
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: F7941D
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.signal_avg
+        - sortorder: '1'
+          drawtype: BOLD_LINE
+          color: 199C0D
+          yaxisside: RIGHT
+          item:
+            host: 'FortiAP by FortiGate HTTP'
+            key: fap.client.snr_avg
     - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
       name: 'FortiAP: Managed AP state counts'
       graph_items:
