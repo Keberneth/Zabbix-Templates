@@ -1,8 +1,6 @@
 zabbix_export:
   version: '7.0'
   template_groups:
-    - uuid: df97989912ff40919985d25706920120
-      name: 'Fortinet Office Network'
     - uuid: 41d23565286045a6855bdf9b7c52dc87
       name: 'Templates/Network devices'
   templates:
@@ -32,11 +30,12 @@ zabbix_export:
         
         
         Custom extension: HA cluster monitoring via FortiOS REST API. Adds HA member discovery, per-member items/triggers, and an HA diagnostics dashboard while keeping existing FortiGate monitoring items unchanged.
+        
+        Custom extension: BGP neighbor, IPSec tunnel, and hardware sensor alarm monitoring via FortiOS REST API with integrated dashboards.
       vendor:
         name: Keberneth
-        version: 7.0.2
+        version: 7.0.4
       groups:
-        - name: 'Fortinet Office Network'
         - name: 'Templates/Network devices'
       items:
         - uuid: e74af8e347814085a7d01142c9aae447
@@ -78,16 +77,158 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: availability
+        - uuid: 2910581857964420a78007eaa04013a2
+          name: 'BGP neighbors item errors'
+          type: DEPENDENT
+          key: fgate.bgp.data_errors
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Item for gathering errors of BGP neighbor data.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.bgp.get_data
+          tags:
+            - tag: component
+              value: bgp
+            - tag: component
+              value: error
+          triggers:
+            - uuid: aa56508637424970ad6846d6c605d519
+              expression: 'length(last(/FortiGate by HTTP/fgate.bgp.data_errors))>0 and length(last(/FortiGate by HTTP/fgate.bgp.data_errors,#1:now-1m))>0 and nodata(/FortiGate by HTTP/fgate.bgp.data_errors,2m)=0'
+              name: 'BGP neighbors API item errors'
+              priority: WARNING
+              dependencies:
+                - name: 'Unexpected response from API'
+                  expression: 'last(/FortiGate by HTTP/fgate.api.status)=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 331f179db3164bceabf6fc03b79494d1
+          name: 'Get BGP neighbors'
+          type: HTTP_AGENT
+          key: fgate.bgp.get_data
+          delay: 3m
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          description: 'Raw BGP neighbor data from FortiGate REST API.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"error":"Not supported value received"}'
+          timeout: '{$FGATE.DATA.TIMEOUT}'
+          url: '{$FGATE.SCHEME}://{$FGATE.API.FQDN}:{$FGATE.API.PORT}/api/v2/monitor/router/bgp/neighbors'
+          query_fields:
+            - name: vdom
+              value: '{$FGATE.API.BGP.VDOM}'
+          follow_redirects: 'NO'
+          http_proxy: '{$FGATE.HTTP.PROXY}'
+          headers:
+            - name: Accept
+              value: application/json
+            - name: Authorization
+              value: 'Bearer {$FGATE.API.TOKEN}'
+          tags:
+            - tag: component
+              value: bgp
+            - tag: component
+              value: raw
+        - uuid: 88d91dfc32d040abb9236b5d4d0e9fd3
+          name: 'BGP neighbors established'
+          type: DEPENDENT
+          key: fgate.bgp.neighbors.established
+          delay: '0'
+          description: 'Number of BGP neighbors in Established state.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var results = Array.isArray(obj.results) ? obj.results : [];
+                  var count = 0;
+                  results.forEach(function (n) {
+                      if (String(n.state || '').toLowerCase() === 'established') {
+                          count++;
+                      }
+                  });
+                  return count;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.bgp.get_data
+          tags:
+            - tag: component
+              value: bgp
+        - uuid: 2eed491587f24a678c7679bef18d5c9a
+          name: 'BGP neighbors not established'
+          type: DEPENDENT
+          key: fgate.bgp.neighbors.not_established
+          delay: '0'
+          description: 'Number of BGP neighbors not in Established state.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var results = Array.isArray(obj.results) ? obj.results : [];
+                  var count = 0;
+                  results.forEach(function (n) {
+                      if (String(n.state || '').toLowerCase() !== 'established') {
+                          count++;
+                      }
+                  });
+                  return count;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.bgp.get_data
+          tags:
+            - tag: component
+              value: bgp
+        - uuid: 9503640a165149639724697402ed6a60
+          name: 'BGP neighbors total'
+          type: DEPENDENT
+          key: fgate.bgp.neighbors.total
+          delay: '0'
+          description: 'Total number of BGP neighbors returned by the FortiGate API.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var results = Array.isArray(obj.results) ? obj.results : [];
+                  return results.length;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.bgp.get_data
+          tags:
+            - tag: component
+              value: bgp
         - uuid: 3a54a2ef2ad94f0d8df190356ca0ac9b
-          name: 'Number of CPUs'
+          name: 'FortiGate-VM license: Number of CPUs'
           type: DEPENDENT
           key: fgate.cpu.num
           delay: '0'
-          description: 'Number of processors according to the current license.'
+          description: 'Number of FortiGate-VM vCPUs from license/status data. This field is not returned by physical FortiGate appliances; missing values are discarded to avoid false preprocessing errors. CPU utilization is monitored separately by fgate.cpu.util.'
           preprocessing:
             - type: JSONPATH
               parameters:
                 - $.data.vm.cpu_used
+              error_handler: DISCARD_VALUE
             - type: DISCARD_UNCHANGED_HEARTBEAT
               parameters:
                 - 1d
@@ -243,9 +384,7 @@ zabbix_export:
               value: system
           triggers:
             - uuid: 1426177b905e442fb2cdd963e8e8bba1
-              expression: |
-                last(/FortiGate by HTTP/fgate.device.serialnumber,#1)<>last(/FortiGate by HTTP/fgate.device.serialnumber,#2) and
-                length(last(/FortiGate by HTTP/fgate.device.serialnumber))>0
+              expression: 'last(/FortiGate by HTTP/fgate.device.serialnumber,#1)<>last(/FortiGate by HTTP/fgate.device.serialnumber,#2) and length(last(/FortiGate by HTTP/fgate.device.serialnumber))>0'
               name: 'Device has been replaced'
               event_name: 'Device has been replaced (new serial number received)'
               priority: INFO
@@ -467,105 +606,105 @@ zabbix_export:
           params: |
             var params = JSON.parse(value),
             	request = new HttpRequest(),
-            	result = {"data": {}, "error": ""},
+            	result = {"data": {}, "error": "" },
             	api_url = "",
             	policies = {},
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
             	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug log for more information.';
+            		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
             	if (response !== null) {
             		try {
             			response = JSON.parse(response);
-            		}
+             		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
             	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot process response data: received data is not an object.';
+            		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw 'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
-            };
+             };
             
             try {
             	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-            		var macro = '{$FGATE.' + field.toUpperCase() + '}';
+            		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key] === '') {
+            		if (params[key] === macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key] === 'undefined') {
+            		if (typeof params[key]  === 'undefined') {
             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
-            		}
+             		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-            	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization: Bearer ' + params.token);
             
-            	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+            	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var firewall_data = getHttpData(
             		api_url + '/api/v2/monitor/firewall/policy'
             	);
-            
+             
             	var firewall_list = getHttpData(
             		api_url + '/api/v2/cmdb/firewall/policy'
             	);
             
-            	firewall_list.results.forEach(function (v) {
+            	firewall_list.results.forEach(function  (v) {
             		var item = {};
-            		['q_origin_key',  'status', 'name', 'uuid', 'action', 'ip-version-type', 'label'].forEach(function (k) {
+            		['q_origin_key',  'status', 'name', 'uuid', 'action', 'ip-version-type', 'label'].forEach(function  (k) {
             			item[k] = v[k];
             		});
             		if (typeof item.name === 'undefined' || item.name === '') {
-            			if (typeof item.label !== 'undefined' && item.label !== '') {
+            			if  (typeof item.label !== 'undefined' && item.label !== '') {
             				item.name = item.label;
             			}
-            			else if (typeof v.policyid !== 'undefined') {
+            			else  if (typeof v.policyid !== 'undefined') {
             				item.name = 'Policy ' + String(v.policyid);
             			}
-            			else if (typeof item.uuid !== 'undefined' && item.uuid !== '') {
+            			else  if (typeof item.uuid !== 'undefined' && item.uuid !== '') {
             				item.name = item.uuid;
             			}
-            			else {
+            			else  {
             				item.name = 'Unnamed policy';
             			}
             		}
             		policies[v.policyid] = item;
             	});
             
-            	result.data = firewall_data.results.map(function (v) {
-            		if (typeof v.policyid !== 'undefined' && typeof policies[String(v.policyid)] !== 'undefined') {
+            	result.data  = firewall_data.results.map(function (v) {
+            		if (typeof v.policyid !== 'undefined' && typeof policies[String(v.policyid)]  !== 'undefined') {
             			Object.assign(v, policies[String(v.policyid)]);
             		}
             		return v;
-            	}).filter(function (v) {
+            	}).filter(function  (v) {
             		if (typeof v.uuid !== 'undefined' && v.uuid !== '') {
             			return v;
             		}
             	});
-            } catch (error) {
+            } catch (error)  {
             	error_msg = error.toString();
             	error_msg += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
+            	Zabbix.log(3, '[ FortiGate  ] ERROR: ' + error_msg);
             };
             
             result.error = error_msg;
@@ -1569,17 +1708,288 @@ zabbix_export:
           tags:
             - tag: component
               value: ha
+        - uuid: 3bf65ea90a334045b251aabd0e669a04
+          name: 'IPSec tunnel item errors'
+          type: DEPENDENT
+          key: fgate.ipsec.data_errors
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Item for gathering errors of IPSec tunnel data.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.ipsec.get_data
+          tags:
+            - tag: component
+              value: error
+            - tag: component
+              value: ipsec
+          triggers:
+            - uuid: fbf5f3bb4a0244ce93ca7339b2129373
+              expression: 'length(last(/FortiGate by HTTP/fgate.ipsec.data_errors))>0 and length(last(/FortiGate by HTTP/fgate.ipsec.data_errors,#1:now-1m))>0 and nodata(/FortiGate by HTTP/fgate.ipsec.data_errors,2m)=0'
+              name: 'IPSec tunnel API item errors'
+              priority: WARNING
+              dependencies:
+                - name: 'Unexpected response from API'
+                  expression: 'last(/FortiGate by HTTP/fgate.api.status)=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 00a1ef422dbf4cbbbd8e50ccb0173cc5
+          name: 'Get IPSec tunnels'
+          type: HTTP_AGENT
+          key: fgate.ipsec.get_data
+          delay: 3m
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          description: 'Raw IPSec tunnel data from FortiGate REST API.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"error":"Not supported value received"}'
+          timeout: '{$FGATE.DATA.TIMEOUT}'
+          url: '{$FGATE.SCHEME}://{$FGATE.API.FQDN}:{$FGATE.API.PORT}/api/v2/monitor/vpn/ipsec'
+          query_fields:
+            - name: vdom
+              value: '{$FGATE.API.IPSEC.VDOM}'
+          follow_redirects: 'NO'
+          http_proxy: '{$FGATE.HTTP.PROXY}'
+          headers:
+            - name: Accept
+              value: application/json
+            - name: Authorization
+              value: 'Bearer {$FGATE.API.TOKEN}'
+          tags:
+            - tag: component
+              value: ipsec
+            - tag: component
+              value: raw
+        - uuid: dfe74c85770d49c9b2303596d7dd03ac
+          name: 'IPSec tunnels down'
+          type: DEPENDENT
+          key: fgate.ipsec.tunnels.down
+          delay: '0'
+          description: 'Number of IPSec phase 2 tunnels with status down.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var roots = Array.isArray(obj.results) ? obj.results : [];
+                  
+                  var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
+                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                  var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
+                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  
+                  function buildRegex(pattern, fallbackPattern) {
+                      pattern = String(pattern || fallbackPattern || '.*');
+                      var flags = '';
+                  
+                      if (pattern.indexOf('(?i)') !== -1) {
+                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          flags = 'i';
+                      }
+                  
+                      try {
+                          return new RegExp(pattern, flags);
+                      }
+                      catch (error) {
+                          return new RegExp(fallbackPattern || '(?!)');
+                      }
+                  }
+                  
+                  var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
+                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
+                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  
+                  function shouldMonitor(phase1, p2) {
+                      var tunnelName = String(p2.p2name || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                  
+                      return tunnelMatches.test(tunnelName)
+                          && !tunnelNotMatches.test(tunnelName)
+                          && phase1Matches.test(phase1Name)
+                          && !phase1NotMatches.test(phase1Name);
+                  }
+                  
+                  var count = 0;
+                  roots.forEach(function (phase1) {
+                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      proxyids.forEach(function (p2) {
+                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase() === 'down') {
+                              count++;
+                          }
+                      });
+                  });
+                  return count;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.ipsec.get_data
+          tags:
+            - tag: component
+              value: ipsec
+        - uuid: 271a5dd9002a4b09b6b34533d094664a
+          name: 'IPSec tunnels total'
+          type: DEPENDENT
+          key: fgate.ipsec.tunnels.total
+          delay: '0'
+          description: 'Total number of IPSec phase 2 tunnels returned by the FortiGate API.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var roots = Array.isArray(obj.results) ? obj.results : [];
+                  
+                  var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
+                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                  var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
+                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  
+                  function buildRegex(pattern, fallbackPattern) {
+                      pattern = String(pattern || fallbackPattern || '.*');
+                      var flags = '';
+                  
+                      if (pattern.indexOf('(?i)') !== -1) {
+                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          flags = 'i';
+                      }
+                  
+                      try {
+                          return new RegExp(pattern, flags);
+                      }
+                      catch (error) {
+                          return new RegExp(fallbackPattern || '(?!)');
+                      }
+                  }
+                  
+                  var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
+                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
+                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  
+                  function shouldMonitor(phase1, p2) {
+                      var tunnelName = String(p2.p2name || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                  
+                      return tunnelMatches.test(tunnelName)
+                          && !tunnelNotMatches.test(tunnelName)
+                          && phase1Matches.test(phase1Name)
+                          && !phase1NotMatches.test(phase1Name);
+                  }
+                  
+                  var count = 0;
+                  roots.forEach(function (phase1) {
+                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      proxyids.forEach(function (p2) {
+                          if (shouldMonitor(phase1, p2)) {
+                              count++;
+                          }
+                      });
+                  });
+                  return count;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.ipsec.get_data
+          tags:
+            - tag: component
+              value: ipsec
+        - uuid: c4807605c698445a830c349bc293a633
+          name: 'IPSec tunnels up'
+          type: DEPENDENT
+          key: fgate.ipsec.tunnels.up
+          delay: '0'
+          description: 'Number of IPSec phase 2 tunnels with status up.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var obj = JSON.parse(value);
+                  var roots = Array.isArray(obj.results) ? obj.results : [];
+                  
+                  var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
+                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                  var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
+                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  
+                  function buildRegex(pattern, fallbackPattern) {
+                      pattern = String(pattern || fallbackPattern || '.*');
+                      var flags = '';
+                  
+                      if (pattern.indexOf('(?i)') !== -1) {
+                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          flags = 'i';
+                      }
+                  
+                      try {
+                          return new RegExp(pattern, flags);
+                      }
+                      catch (error) {
+                          return new RegExp(fallbackPattern || '(?!)');
+                      }
+                  }
+                  
+                  var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
+                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
+                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  
+                  function shouldMonitor(phase1, p2) {
+                      var tunnelName = String(p2.p2name || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                  
+                      return tunnelMatches.test(tunnelName)
+                          && !tunnelNotMatches.test(tunnelName)
+                          && phase1Matches.test(phase1Name)
+                          && !phase1NotMatches.test(phase1Name);
+                  }
+                  
+                  var count = 0;
+                  roots.forEach(function (phase1) {
+                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      proxyids.forEach(function (p2) {
+                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase() === 'up') {
+                              count++;
+                          }
+                      });
+                  });
+                  return count;
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.ipsec.get_data
+          tags:
+            - tag: component
+              value: ipsec
         - uuid: 529076e8494e40f7b823f981e7159fd0
-          name: 'Total memory'
+          name: 'FortiGate-VM license: Total memory'
           type: DEPENDENT
           key: fgate.memory.total
           delay: '0'
           units: B
-          description: 'Total memory, expressed in bytes.'
+          description: 'FortiGate-VM memory from license/status data. This field is not returned by physical FortiGate appliances; missing values are discarded to avoid false preprocessing errors. Memory utilization is monitored separately by fgate.memory.util.'
           preprocessing:
             - type: JSONPATH
               parameters:
                 - $.data.vm.mem_used
+              error_handler: DISCARD_VALUE
             - type: DISCARD_UNCHANGED_HEARTBEAT
               parameters:
                 - 1d
@@ -1708,95 +2118,95 @@ zabbix_export:
           params: |
             var params = JSON.parse(value),
             	request = new HttpRequest(),
-            	result = {"data": {}, "error": ""},
+            	result = {"data": {}, "error": "" },
             	api_url = "",
             	interfaces = {},
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
             	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug log for more information.';
+            		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
             	if (response !== null) {
             		try {
             			response = JSON.parse(response);
-            		}
+             		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
             	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot process response data: received data is not an object.';
+            		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw 'Failed to parse response  received from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response  received from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
-            };
+             };
             
             try {
             	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-            		var macro = '{$FGATE.' + field.toUpperCase() + '}';
+            		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key] === '') {
+            		if (params[key] === macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key] === 'undefined') {
+            		if (typeof params[key]  === 'undefined') {
             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
-            		}
+             		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-            	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization: Bearer ' + params.token);
             
-            	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+            	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var netif_data = getHttpData(
             		api_url + '/api/v2/monitor/system/interface'
             	);
             
-            	var netif_list = getHttpData(
+             	var netif_list = getHttpData(
             		api_url + '/api/v2/cmdb/system/interface'
             	);
             
-            	result.data = netif_list.results.map(function (v) {
+            	result.data = netif_list.results.map(function  (v) {
             		var item = {};
              		['q_origin_key', 'name', 'mode', 'type', 'description'].forEach(function (k) {
-            			item[k] = v[k];
+             			item[k] = v[k];
             		});
-            		if (typeof item.q_origin_key !== 'undefined' && typeof netif_data.results[String(item.q_origin_key)] !== 'undefined') {
+            		if (typeof item.q_origin_key !== 'undefined' && typeof netif_data.results[String(item.q_origin_key)]  !== 'undefined') {
             			Object.assign(item, netif_data.results[String(item.q_origin_key)]);
             		}
-            		if (typeof item.alias !== 'undefined') {
+            		if (typeof  item.alias !== 'undefined') {
             			item.alias = item.alias.slice(1,-1);
             		}
             		else {
-            			item.alias = '';
+            			item.alias =  '';
             		}
             		if (typeof item.link === 'undefined') {
             			item.link = false;
             		}
-            		if (typeof item.id === 'undefined') {
+            		if (typeof item.id  === 'undefined') {
             			item.id = item.q_origin_key;
             		}
             		return item;
             	});
             } catch (error) {
-            	error_msg = error.toString();
+            	error_msg  = error.toString();
             	error_msg += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
+            	Zabbix.log(3, '[ FortiGate ] ERROR: '  + error_msg);
             };
             
             result.error = error_msg;
@@ -1860,90 +2270,90 @@ zabbix_export:
           params: |
             var params = JSON.parse(value),
             	request = new HttpRequest(),
-            	result = {"data": {}, "error": ""},
+            	result = {"data": {}, "error": "" },
             	api_url = "",
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            	Zabbix.log(4,  '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
             
-            	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug log for more information.';
+             	if (request.getStatus() !== 200) {
+            		throw 'Failed to receive data: invalid response status code. Check debug  log for more information.';
             	}
             
             	if (response !== null) {
             		try {
             			response = JSON.parse(response);
-            		}
+             		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
             	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot process response data: received data is not an object.';
+            		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw 'Failed to parse response received from ' + uri  + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received from ' + uri  + '. Check debug log for more information.';
             	}
             
             	return response;
-            };
+             };
             
             try {
             	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-            		var macro = '{$FGATE.' + field.toUpperCase() + '}';
+            		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key] === '') {
+            		if (params[key] === macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key] === 'undefined') {
+            		if (typeof params[key]  === 'undefined') {
             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
-            		}
+             		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-            	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization: Bearer ' + params.token);
             
-            	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+            	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var resource_list = getHttpData(
             		api_url + '/api/v2/monitor/system/resource/usage?interval=1-min'
-            	);
+             	);
             
             	var disk_info = getHttpData(
             		api_url + '/api/v2/monitor/log/current-disk-usage'
             	);
             
-            	if (typeof resource_list.results !== 'undefined' && typeof resource_list.results  === 'object') {
-            		Object.keys(resource_list.results).forEach(function (key) {
+            	if (typeof  resource_list.results !== 'undefined' && typeof resource_list.results  === 'object') {
+            		Object.keys(resource_list.results).forEach(function  (key) {
             			var resource = resource_list.results[key];
             			if (resource.length > 0) {
-            				result.data[key] = resource[0].current;
+            				result.data[key]  = resource[0].current;
             			}
             		});
             	}
             	else {
-            		throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            		throw 'Failed to parse response received from FortiGate  API. Check debug log for more information.';
             	}
             
             	Object.keys(disk_info.results).forEach(function (key) {
-            		result.data['disk_' + key.split('_')[0]] = disk_info.results[key];
+             		result.data['disk_' + key.split('_')[0]] = disk_info.results[key];
             	});
             } catch (error) {
             	error_msg = error.toString();
-            	error_msg += error_msg.endsWith('.') ? '' : '.';
+             	error_msg += error_msg.endsWith('.') ? '' : '.';
             	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
             };
             
-            result.error = error_msg;
+             result.error = error_msg;
             
             return JSON.stringify(result);
           description: 'Item for gathering device resource data from FortiGate API.'
@@ -2004,130 +2414,130 @@ zabbix_export:
           params: |
             var params = JSON.parse(value),
             	request = new HttpRequest(),
-            	result = {"data": {}, "error": ""},
+            	result = {"data": {}, "error": "" },
             	api_url = "",
             	health_members = [],
             	health_checks = [],
             	members = {},
             	error_msg = "";
             
-            function getHttpData(url) {
+            function  getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response  with status code ' + request.getStatus() + ': ' + response);
             
             	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug log for more information.';
+            		throw  'Failed to receive data: invalid response status code. Check debug log for more information.';
             	}
             
-            	if (response !== null) {
+            	if (response  !== null) {
             		try {
             			response = JSON.parse(response);
             		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed  to parse response received from FortiGate API. Check debug log for more information.';
             		}
             	}
             
-            	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot process response data: received data is not an object.';
+            	if (typeof  response !== 'object' || response === null) {
+            		throw 'Cannot process response data: received data is not an  object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action :  "");
-            		throw 'Failed to parse response received from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results  === 'undefined') {
+            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined')  ? '?action=' + response.action :  "");
+            		throw 'Failed to parse response received from ' + uri + '. Check debug  log for more information.';
             	}
             
             	return response;
             };
             
             try {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function  (field) {
             		var macro = '{$FGATE.' + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key] === '') {
+            		 if (params[key] === macro || params[key] === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
-            		}
+             		}
             		if (typeof params[key] === 'undefined') {
-            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+            			throw 'Please set "' + key + '" script input parameter  to ' + macro + ' macro value.';
             		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy  !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
-            	request.addHeader('Accept: application/json');
+             	request.addHeader('Accept: application/json');
             	request.addHeader('Authorization: Bearer ' + params.token);
             
-            	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
+             	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
             
             	var sdwan_member_data = getHttpData(
-            		api_url + '/api/v2/monitor/virtual-wan/members'
+            	 	api_url + '/api/v2/monitor/virtual-wan/members'
             	);
             
             	var sdwan_health_data = getHttpData(
             		api_url + '/api/v2/monitor/virtual-wan/health-check'
-            	);
+             	);
             
              	var sdwan_list = getHttpData(
             		api_url + '/api/v2/cmdb/system/sdwan'
             	);
             
-            	sdwan_list.results['health-check'].forEach(function (item) {
+            	sdwan_list.results['health-check'].forEach(function  (item) {
             		health_checks[item.q_origin_key] = item.members.length;
             		item.members.forEach(function (m) {
-            			health_members.push({
+             			health_members.push({
             				'member_id': m.q_origin_key,
             				'health_id': item.q_origin_key,
-            				'health_name': item.name,
+            			 	'health_name': item.name,
             			});
             		});
             	});
             
             	sdwan_list.results.members.forEach(function (item) {
-            		members[item.q_origin_key] = item;
+             		members[item.q_origin_key] = item;
             	});
             
             	result.data = {
-            		'member_lld': sdwan_list.results.members.filter(function (v) {
+            		'member_lld': sdwan_list.results.members.filter(function  (v) {
             			if (v.interface.length > 0) {
             				return v;
             			}
             		}).map(function (v) {
-            			if (typeof v.interface !== 'undefined' && typeof sdwan_member_data.results[v.interface] !== 'undefined') {
-            				Object.assign(v, sdwan_member_data.results[v.interface]);
+            			if (typeof  v.interface !== 'undefined' && typeof sdwan_member_data.results[v.interface] !== 'undefined') {
+            				Object.assign(v,  sdwan_member_data.results[v.interface]);
             			}
             			return v;
             		}),
-            		'health_lld': health_members.map(function (m) {
+            		'health_lld': health_members.map(function  (m) {
             			var item = {};
             			if (typeof members[String(m.member_id)] !== 'undefined') {
-            				['interface', 'status'].forEach(function (k) {
+            				['interface',  'status'].forEach(function (k) {
             					item[k] = members[String(m.member_id)][k];
             				});
-            				 Object.assign(item, m);
+            				 Object.assign(item,  m);
             			};
             			return item;
             		}).filter(function (v) {
             			if (v.interface.length > 0) {
-            				return v;
+            				return  v;
             			}
             		}),
             		'health_data': sdwan_list.results['health-check'].filter(function (v) {
-            			if (typeof health_checks[String(v.q_origin_key)] !== 'undefined' && health_checks[String(v.q_origin_key)] > 0) {
-            				return v;
+            			if (typeof  health_checks[String(v.q_origin_key)] !== 'undefined' && health_checks[String(v.q_origin_key)] > 0) {
+            				 return v;
             			}
             		}).map(function (v) {
             			delete v.members;
-            			if (typeof v.name !== 'undefined' && typeof sdwan_health_data.results[v.name] !== 'undefined') {
+            			if (typeof v.name !== 'undefined' &&  typeof sdwan_health_data.results[v.name] !== 'undefined') {
             				Object.assign(v, sdwan_health_data.results[v.name]);
-            			}
+             			}
             			return v;
             		})
             	}
             } catch (error) {
             	error_msg = error.toString();
-            	error_msg += error_msg.endsWith('.') ? '' : '.';
+            	error_msg += error_msg.endsWith('.')  ? '' : '.';
             	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
             };
             
@@ -2192,57 +2602,57 @@ zabbix_export:
           params: |
             var params = JSON.parse(value),
             	request = new HttpRequest(),
-            	result = {"data": {}, "lld": [], "error": ""},
+            	result = {"data": {}, "lld": [], " error": ""},
             	api_url = "",
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
             	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug log for more information.';
+            		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
             	if (response !== null) {
             		try {
             			response = JSON.parse(response);
-            		}
+             		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
             	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot process response data: received data is not an object.';
+            		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw 'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
-            };
+             };
             
             function capitalize(word, idx) {
             	return upAcronymCase(word.charAt(idx).toUpperCase() + word.slice(idx+1));
-            }
+             }
             
             function upAcronymCase(word) {
             	if (word.length < 4) {
             		return word.toUpperCase()
             	}
             	return word;
-            }
+             }
             
             function prepareServiceName(key) {
             	var result = [];
             	key.split('_').forEach(function (w) {
-            		var forti_idx = w.indexOf('forti');
+            		var forti_idx  = w.indexOf('forti');
             		w = upAcronymCase(w);
             		if (forti_idx !== -1)
-            			w = 'Forti' + capitalize(w, forti_idx + 5);
+            			w = 'Forti' + capitalize(w, forti_idx  + 5);
             		else
             			w = capitalize(w, 0)
             		result.push(w);
@@ -2251,56 +2661,56 @@ zabbix_export:
             	return result.join(' ');
             };
             
-            try {
+            try  {
             	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-            		var macro = '{$FGATE.' + field.toUpperCase() + '}';
+            		var macro = '{$FGATE.' + field.toUpperCase()  + '}';
             		var key = field.split('.').pop();
             		if (params[key] === macro || params[key] === '') {
-            			throw 'Please change ' + macro + ' macro to the proper value.';
+            			throw  'Please change ' + macro + ' macro to the proper value.';
             		}
             		if (typeof params[key] === 'undefined') {
-            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
             		}
             	});
             
-            	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
+            	 api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined'  && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
-            	}
+             	}
             
             	request.addHeader('Accept: application/json');
             	request.addHeader('Authorization: Bearer ' + params.token);
-            
+             
             	var licence_list = getHttpData(
             		api_url + '/api/v2/monitor/license/status'
             	);
             
             	result.data = licence_list.results;
-            	Object.keys(licence_list.results).forEach(function (key) {
+             	Object.keys(licence_list.results).forEach(function (key) {
             		var resource = licence_list.results[key];
-            		if (typeof resource.status !== 'undefined' && typeof resource.type !== 'undefined') {
+            		 if (typeof resource.status !== 'undefined' && typeof resource.type !== 'undefined') {
             			var has_expires = (
-            				typeof resource.expires !== 'undefined' &&
+             				typeof resource.expires !== 'undefined' &&
             				resource.expires !== null &&
-            				resource.expires !== '' &&
+            				resource.expires  !== '' &&
             				!isNaN(Number(resource.expires)) &&
             				Number(resource.expires) > 0
             			) ? '1' : '0';
-            
+             
             			result.lld.push({
             				"key": key,
             				"name": prepareServiceName(key),
-            				"status": resource.status,
+            				"status":  resource.status,
             				"type": resource.type,
             				"has_expires": has_expires,
             			});
             		}
-            	});
+            	 });
             } catch (error) {
             	error_msg = error.toString();
             	error_msg  += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
+            	Zabbix.log(3,  '[ FortiGate ] ERROR: ' + error_msg);
             };
             
             result.error = error_msg;
@@ -2482,6 +2892,123 @@ zabbix_export:
                 - tag: scope
                   value: availability
       discovery_rules:
+        - uuid: 657fd9b9be094331857d24386ad6bad0
+          name: 'BGP neighbor discovery'
+          type: DEPENDENT
+          key: fgate.bgp.neighbor.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#BGP_NEIGHBOR_IP}'
+                value: '{$FGATE.BGP.NEIGHBOR.MATCHES}'
+                formulaid: A
+              - macro: '{#BGP_NEIGHBOR_IP}'
+                value: '{$FGATE.BGP.NEIGHBOR.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Discovery of BGP neighbors from FortiGate REST API.'
+          item_prototypes:
+            - uuid: 0c71d8b4506a4fc2b655a9e94ead0b36
+              name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: State'
+              type: DEPENDENT
+              key: 'fgate.bgp.neighbor.state["{#BGP_NEIGHBOR_IP}"]'
+              delay: '0'
+              history: 30d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.results[?(@.neighbor_ip == "{#BGP_NEIGHBOR_IP}")].state.first()'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: fgate.bgp.get_data
+              tags:
+                - tag: bgp_neighbor
+                  value: '{#BGP_NEIGHBOR_IP}'
+                - tag: component
+                  value: bgp
+            - uuid: 7f13e6b580774d19988c5c7fb5d59c0b
+              name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: State code'
+              type: DEPENDENT
+              key: 'fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"]'
+              delay: '0'
+              history: 30d
+              description: 'Numeric BGP state code for dashboards and trigger evaluation.'
+              valuemap:
+                name: 'BGP neighbor state'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var state = String(value || '').toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+                      if (state === 'established') { return 1; }
+                      if (state === 'idle') { return 2; }
+                      if (state === 'connect') { return 3; }
+                      if (state === 'active') { return 4; }
+                      if (state === 'open sent' || state === 'opensent') { return 5; }
+                      if (state === 'open confirm' || state === 'openconfirm') { return 6; }
+                      return 0;
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'fgate.bgp.neighbor.state["{#BGP_NEIGHBOR_IP}"]'
+              tags:
+                - tag: bgp_neighbor
+                  value: '{#BGP_NEIGHBOR_IP}'
+                - tag: component
+                  value: bgp
+              trigger_prototypes:
+                - uuid: 3962defd2b734c969c66a2206f30f9e5
+                  expression: '{$FGATE.BGP.MONITOR}=1 and {$FGATE.BGP.NEIGHBOR.CONTROL:"{#BGP_NEIGHBOR_IP}"}=1 and (last(/FortiGate by HTTP/fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"])=3 or last(/FortiGate by HTTP/fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"])=4)'
+                  name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: Status Active or Connect'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'The BGP neighbor is in Active or Connect state instead of Established.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: ba0c211b95fa4b2fa93b72c16f8cee4e
+                  expression: '{$FGATE.BGP.MONITOR}=1 and {$FGATE.BGP.NEIGHBOR.CONTROL:"{#BGP_NEIGHBOR_IP}"}=1 and last(/FortiGate by HTTP/fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"])=2'
+                  name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: Status Idle'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'The BGP neighbor is in Idle state instead of Established.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: ab5280c1623149e480477d278188d2c4
+                  expression: '{$FGATE.BGP.MONITOR}=1 and {$FGATE.BGP.NEIGHBOR.CONTROL:"{#BGP_NEIGHBOR_IP}"}=1 and last(/FortiGate by HTTP/fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"])=6'
+                  name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: Status Open Confirm'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'The BGP neighbor is in Open Confirm state instead of Established.'
+                  tags:
+                    - tag: scope
+                      value: availability
+                - uuid: eb5adf74fb4b40ff8de130e650d32c22
+                  expression: '{$FGATE.BGP.MONITOR}=1 and {$FGATE.BGP.NEIGHBOR.CONTROL:"{#BGP_NEIGHBOR_IP}"}=1 and last(/FortiGate by HTTP/fgate.bgp.neighbor.state_code["{#BGP_NEIGHBOR_IP}"])=5'
+                  name: 'BGP neighbor [{#BGP_NEIGHBOR_IP}]: Status Open Sent'
+                  opdata: 'Current state: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'The BGP neighbor is in Open Sent state instead of Established.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: fgate.bgp.get_data
+          lld_macro_paths:
+            - lld_macro: '{#BGP_NEIGHBOR_IP}'
+              path: $.neighbor_ip
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.results
         - uuid: 13ff598606764abbaec4d0b9f6cbbf33
           name: 'Firewall policies discovery'
           type: DEPENDENT
@@ -3279,6 +3806,126 @@ zabbix_export:
             - type: DISCARD_UNCHANGED_HEARTBEAT
               parameters:
                 - 1h
+        - uuid: ce2d434a10d8478c8b55c3e24939e0bb
+          name: 'IPSec tunnel discovery'
+          type: DEPENDENT
+          key: fgate.ipsec.tunnel.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#IPSEC_PHASE1_NAME}'
+                value: '{$FGATE.IPSEC.PHASE1.MATCHES}'
+                formulaid: A
+              - macro: '{#IPSEC_PHASE1_NAME}'
+                value: '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+              - macro: '{#IPSEC_TUNNEL_NAME}'
+                value: '{$FGATE.IPSEC.TUNNEL.MATCHES}'
+                formulaid: C
+              - macro: '{#IPSEC_TUNNEL_NAME}'
+                value: '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: D
+          description: 'Discovery of IPSec phase-2 tunnels from the FortiGate REST API. The LLD filter supports include/exclude regex macros for phase-2/tunnel names and phase-1 names, so FortiClient/end-user/dial-up IPSec tunnels can be excluded from monitoring.'
+          item_prototypes:
+            - uuid: 8e92b0eaac1b46c39186f519abff43c5
+              name: 'IPSec tunnel [{#IPSEC_TUNNEL_NAME}]: Status'
+              type: DEPENDENT
+              key: 'fgate.ipsec.tunnel.status["{#IPSEC_TUNNEL_NAME}"]'
+              delay: '0'
+              history: 90d
+              value_type: TEXT
+              trends: '0'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.results[*].proxyid[?(@.p2name == "{#IPSEC_TUNNEL_NAME}")].status.first()'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: fgate.ipsec.get_data
+              tags:
+                - tag: component
+                  value: ipsec
+                - tag: ipsec_phase1
+                  value: '{#IPSEC_PHASE1_NAME}'
+                - tag: ipsec_tunnel
+                  value: '{#IPSEC_TUNNEL_NAME}'
+            - uuid: 6da5b81819d74fdeaa3f935e2cdae8c2
+              name: 'IPSec tunnel [{#IPSEC_TUNNEL_NAME}]: Status code'
+              type: DEPENDENT
+              key: 'fgate.ipsec.tunnel.status_code["{#IPSEC_TUNNEL_NAME}"]'
+              delay: '0'
+              history: 90d
+              description: 'Numeric IPSec tunnel status code for dashboards and trigger evaluation.'
+              valuemap:
+                name: 'IPSec tunnel status'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var status = String(value || '').toLowerCase().trim();
+                      if (status === 'up') { return 1; }
+                      if (status === 'down') { return 0; }
+                      return 2;
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: 'fgate.ipsec.tunnel.status["{#IPSEC_TUNNEL_NAME}"]'
+              tags:
+                - tag: component
+                  value: ipsec
+                - tag: ipsec_phase1
+                  value: '{#IPSEC_PHASE1_NAME}'
+                - tag: ipsec_tunnel
+                  value: '{#IPSEC_TUNNEL_NAME}'
+              trigger_prototypes:
+                - uuid: 6d65f40f395e438e96e06c8d69c8eac3
+                  expression: '{$FGATE.IPSEC.MONITOR}=1 and {$FGATE.IPSEC.TUNNEL.CONTROL:"{#IPSEC_TUNNEL_NAME}"}=1 and last(/FortiGate by HTTP/fgate.ipsec.tunnel.status_code["{#IPSEC_TUNNEL_NAME}"],#1)=0 and last(/FortiGate by HTTP/fgate.ipsec.tunnel.status_code["{#IPSEC_TUNNEL_NAME}"],#2)=0'
+                  name: 'IPSec tunnel [{#IPSEC_TUNNEL_NAME}]: Tunnel is down'
+                  opdata: 'Current status: {ITEM.LASTVALUE1}'
+                  priority: HIGH
+                  description: 'The IPSec tunnel has reported down for two consecutive checks.'
+                  tags:
+                    - tag: scope
+                      value: availability
+          master_item:
+            key: fgate.ipsec.get_data
+          lld_macro_paths:
+            - lld_macro: '{#IPSEC_PHASE1_NAME}'
+              path: $.ipsec_phase1_name
+            - lld_macro: '{#IPSEC_TUNNEL_NAME}'
+              path: $.ipsec_tunnel_name
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value);
+                  var output = [];
+                  var results = Array.isArray(data.results) ? data.results : [];
+                  
+                  results.forEach(function (phase1) {
+                      var phase1Name = String(phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                  
+                      proxyids.forEach(function (p2) {
+                          var row = {};
+                          for (var key in p2) {
+                              if (Object.prototype.hasOwnProperty.call(p2, key)) {
+                                  row[key] = p2[key];
+                              }
+                          }
+                          row.ipsec_tunnel_name = String(p2.p2name || p2.name || '');
+                          row.ipsec_phase1_name = String(p2.p1name || phase1Name || '');
+                          output.push(row);
+                      });
+                  });
+                  
+                  return JSON.stringify(output);
         - uuid: b5d0c50d4ff8400a93618df5d2185ff7
           name: 'Network interfaces discovery'
           type: DEPENDENT
@@ -3593,7 +4240,7 @@ zabbix_export:
                       	'tunnel',
                       	'vdom-link',
                       	'loopback',
-                      	'switch',
+                       	'switch',
                       	'vap-switch',
                       	'wl-mesh',
                       	'fext-wan',
@@ -3601,7 +4248,7 @@ zabbix_export:
                       	'geneve',
                       	'hdlc',
                       	'switch-vlan',
-                      	'emac-vlan',
+                       	'emac-vlan',
                       	'ssl',
                       	'lan-extension'
                       ].indexOf(value);
@@ -3620,13 +4267,9 @@ zabbix_export:
                   value: '{#IFKEY}'
           trigger_prototypes:
             - uuid: b21dcb60f79d4d6686209ff4bb0d4dad
-              expression: |
-                change(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])<0 and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0 
-                and last(/FortiGate by HTTP/fgate.netif.status[{#IFKEY}])<>0
+              expression: 'change(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])<0 and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0  and last(/FortiGate by HTTP/fgate.netif.status[{#IFKEY}])<>0'
               recovery_mode: RECOVERY_EXPRESSION
-              recovery_expression: |
-                (change(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0 and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}],#2)>0) 
-                or last(/FortiGate by HTTP/fgate.netif.status[{#IFKEY}])=0
+              recovery_expression: '(change(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0 and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}],#2)>0)  or last(/FortiGate by HTTP/fgate.netif.status[{#IFKEY}])=0'
               name: 'Interface [{#IFNAME}({#IFALIAS})]: Ethernet has changed to lower speed than it was before'
               opdata: 'Current reported speed: {ITEM.LASTVALUE1}'
               priority: INFO
@@ -3640,14 +4283,9 @@ zabbix_export:
                 - tag: scope
                   value: performance
             - uuid: 5aa7f2cacfc54b6eadfd9817b967725a
-              expression: |
-                (avg(/FortiGate by HTTP/fgate.netif.in[{#IFKEY}],15m)>({$NET.IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}]) or 
-                avg(/FortiGate by HTTP/fgate.netif.out[{#IFKEY}],15m)>({$NET.IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])) 
-                and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0
+              expression: '(avg(/FortiGate by HTTP/fgate.netif.in[{#IFKEY}],15m)>({$NET.IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}]) or  avg(/FortiGate by HTTP/fgate.netif.out[{#IFKEY}],15m)>({$NET.IF.UTIL.MAX:"{#IFNAME}"}/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}]))  and last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])>0'
               recovery_mode: RECOVERY_EXPRESSION
-              recovery_expression: |
-                avg(/FortiGate by HTTP/fgate.netif.in[{#IFKEY}],15m)<(({$NET.IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}]) 
-                and avg(/FortiGate by HTTP/fgate.netif.out[{#IFKEY}],15m)<(({$NET.IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])
+              recovery_expression: 'avg(/FortiGate by HTTP/fgate.netif.in[{#IFKEY}],15m)<(({$NET.IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])  and avg(/FortiGate by HTTP/fgate.netif.out[{#IFKEY}],15m)<(({$NET.IF.UTIL.MAX:"{#IFNAME}"}-3)/100)*last(/FortiGate by HTTP/fgate.netif.speed[{#IFKEY}])'
               name: 'Interface [{#IFNAME}({#IFALIAS})]: High bandwidth usage'
               event_name: 'Interface [{#IFNAME}({#IFALIAS})]: High bandwidth usage (>{$NET.IF.UTIL.MAX:"{#IFNAME}"}%)'
               opdata: 'In: {ITEM.LASTVALUE1}, out: {ITEM.LASTVALUE3}, speed: {ITEM.LASTVALUE2}'
@@ -4491,29 +5129,29 @@ zabbix_export:
                       	'vm_eval',
                       	'free_license',
                       	'vm_valid',
-                      	'cloud_confirm_email',
+                       	'cloud_confirm_email',
                       	'cloud_error',
                       	'cloud_logged_out',
                       	'cloud_login_in_progress',
                       	'expired',
-                      	'expires_soon',
+                       	'expires_soon',
                       	'free_license_exhausted',
                       	'licensed_exhausted',
                       	'no_license',
                       	'no_support',
-                      	'not_registered',
+                      	 'not_registered',
                       	'pending',
                       	'unavailable',
                       	'update_manual',
                       	'update_push',
                       	'update_sched',
-                      	'vm_eval_expired',
+                      	 'vm_eval_expired',
                       	'vm_expired',
                       	'vm_expires_soon',
                       	'vm_grace_period',
                       	'vm_invalid',
                       	'vm_pending',
-                      	'vm_validation_overdue',
+                       	'vm_validation_overdue',
                       ].indexOf(value);
                       return idx !== -1 ? idx : 30;
                 - type: DISCARD_UNCHANGED_HEARTBEAT
@@ -4778,14 +5416,32 @@ zabbix_export:
         - macro: '{$DISK.FREE.WARN}'
           value: '20'
           description: 'Threshold of disk free space for warning trigger in %.'
+        - macro: '{$FGATE.API.BGP.VDOM}'
+          value: root
+          description: 'VDOM in which BGP neighbors reside.'
         - macro: '{$FGATE.API.FQDN}'
           description: 'FortiGate API FQDN/IP (ex. ngfw.example.com).'
+        - macro: '{$FGATE.API.IPSEC.VDOM}'
+          value: root
+          description: 'VDOM in which IPSec tunnels reside.'
         - macro: '{$FGATE.API.PORT}'
           value: '443'
           description: 'The port of FortiGate API endpoint.'
         - macro: '{$FGATE.API.TOKEN}'
           type: SECRET_TEXT
           description: 'FortiGate API token.'
+        - macro: '{$FGATE.BGP.MONITOR}'
+          value: '1'
+          description: 'Set to 0 to disable FortiGate BGP triggers for this host.'
+        - macro: '{$FGATE.BGP.NEIGHBOR.CONTROL}'
+          value: '1'
+          description: 'Set to 0 globally or with BGP neighbor IP context to disable BGP neighbor state triggers.'
+        - macro: '{$FGATE.BGP.NEIGHBOR.MATCHES}'
+          value: '.*'
+          description: 'This macro is used in BGP neighbor discovery. Can be overridden on the host or linked template level.'
+        - macro: '{$FGATE.BGP.NEIGHBOR.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'This macro is used in BGP neighbor discovery. Can be overridden on the host or linked template level.'
         - macro: '{$FGATE.DATA.TIMEOUT}'
           value: 15s
           description: 'Response timeout for an API.'
@@ -4815,9 +5471,48 @@ zabbix_export:
           description: 'Set to 0 globally or with HA member hostname context to disable HA sync triggers.'
         - macro: '{$FGATE.HTTP.PROXY}'
           description: 'HTTP proxy for API requests. You can specify it using the format [protocol://][username[:password]@]proxy.example.com[:port]. See the documentation at https://www.zabbix.com/documentation/7.0/manual/config/items/itemtypes/http'
+        - macro: '{$FGATE.IPSEC.MONITOR}'
+          value: '1'
+          description: 'Set to 0 to disable FortiGate IPSec tunnel triggers for this host.'
+        - macro: '{$FGATE.IPSEC.PHASE1.MATCHES}'
+          value: '.*'
+          description: 'IPSec discovery include regex for phase-1 names ({#IPSEC_PHASE1_NAME}). Use exact names with anchors, for example ^(S2S-HQ|S2S-DC)$. Default includes all phase-1 names before the exclude filter is applied.'
+        - macro: '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}'
+          value: '(?i).*(forticlient|forti[-_ ]?client|forit[-_ ]?client|dial[-_ ]?up|remote[-_ ]?access|end[-_ ]?user|user[-_ ]?vpn|vpn[-_ ]?user|ra[-_ ]?vpn).*'
+          description: 'IPSec discovery exclude regex for phase-1 names ({#IPSEC_PHASE1_NAME}). Default excludes common FortiClient/end-user/dial-up remote-access naming. Set to (?!) to exclude nothing. Exact-name example: ^(FortiClient-Users|IPsec-DialUp)$'
+        - macro: '{$FGATE.IPSEC.TUNNEL.CONTROL}'
+          value: '1'
+          description: 'Set to 0 globally or with IPSec tunnel name context to disable IPSec tunnel state triggers.'
+        - macro: '{$FGATE.IPSEC.TUNNEL.MATCHES}'
+          value: '.*'
+          description: 'IPSec discovery include regex for phase-2/tunnel names ({#IPSEC_TUNNEL_NAME}). Use exact names with anchors, for example ^(S2S-HQ|S2S-DC)$, or a wider regex such as ^S2S-.*. Default includes all tunnel names before the exclude filter is applied.'
+        - macro: '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}'
+          value: '(?i).*(forticlient|forti[-_ ]?client|forit[-_ ]?client|dial[-_ ]?up|remote[-_ ]?access|end[-_ ]?user|user[-_ ]?vpn|vpn[-_ ]?user|ra[-_ ]?vpn).*'
+          description: 'IPSec discovery exclude regex for phase-2/tunnel names ({#IPSEC_TUNNEL_NAME}). Default excludes common FortiClient/end-user/dial-up remote-access naming. Set to (?!) to exclude nothing. Exact-name example: ^(FortiClient-Users|IPsec-DialUp)$'
         - macro: '{$FGATE.SCHEME}'
           value: https
           description: 'Request scheme for the FortiGate API. Use https for current FortiOS versions.'
+        - macro: '{$FGATE.SENSOR.ALARM.CONTROL}'
+          value: '1'
+          description: 'Set to 0 globally or with sensor name context to disable sensor alarm triggers.'
+        - macro: '{$FGATE.SENSOR.API.404_IS_OK}'
+          value: '1'
+          description: 'Treat HTTP 404 from all configured hardware sensor API paths as not-supported and return an empty supported payload instead of an item error. Set to 0 if missing sensor API paths should be reported as an error.'
+        - macro: '{$FGATE.SENSOR.API.FALLBACK_PATH}'
+          value: /api/v2/monitor/system/sensor-info
+          description: 'Fallback FortiGate hardware sensor REST API path for FortiOS/API variants that expose sensor-info without the /select action.'
+        - macro: '{$FGATE.SENSOR.API.PATH}'
+          value: /api/v2/monitor/system/sensor-info/select
+          description: 'Primary FortiGate hardware sensor REST API path. The monitor action path ending in /select is required by several FortiOS API implementations.'
+        - macro: '{$FGATE.SENSOR.MONITOR}'
+          value: '1'
+          description: 'Set to 0 on hosts where hardware sensor monitoring is unavailable or not wanted. When set to 0, the sensor script returns an empty supported payload and does not call the FortiGate sensor API. Leave at 1 to auto-try sensors and silently ignore all-404 responses when {$FGATE.SENSOR.API.404_IS_OK}=1.'
+        - macro: '{$FGATE.SENSOR.NAME.MATCHES}'
+          value: '.*'
+          description: 'This macro is used in hardware sensor discovery. Can be overridden on the host or linked template level.'
+        - macro: '{$FGATE.SENSOR.NAME.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'This macro is used in hardware sensor discovery. Can be overridden on the host or linked template level.'
         - macro: '{$FIRMWARE.UPDATES.CONTROL}'
           value: '1'
           description: 'This macro is used in "New available firmware found" trigger.'
@@ -4966,6 +5661,204 @@ zabbix_export:
           value: CHANGE_IF_NEEDED
           description: 'This macro is used in Service discovery. Can be overridden on the host or linked template level.'
       dashboards:
+        - uuid: 3ab645452db44753ad15761af64af9be
+          name: 'FortiGate: BGP'
+          pages:
+            - name: 'BGP neighbors'
+              widgets:
+                - type: item
+                  name: 'BGP neighbors total'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.bgp.neighbors.total
+                    - type: STRING
+                      name: reference
+                      value: BGP01
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: graph
+                  'y': '4'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        name: 'FortiGate: BGP neighbors'
+                    - type: STRING
+                      name: reference
+                      value: BGP04
+                - type: problems
+                  name: 'BGP problems'
+                  'y': '10'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: BGP06
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                - type: item
+                  name: 'BGP established'
+                  x: '18'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.bgp.neighbors.established
+                    - type: STRING
+                      name: reference
+                      value: BGP02
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: item
+                  name: 'BGP not established'
+                  x: '36'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.bgp.neighbors.not_established
+                    - type: STRING
+                      name: reference
+                      value: BGP03
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: honeycomb
+                  name: 'BGP neighbor states'
+                  x: '36'
+                  'y': '4'
+                  width: '36'
+                  height: '9'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'BGP neighbor *: State code'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^BGP neighbor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '21'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: BGP05
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '24'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.3.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.3.threshold
+                      value: '3'
         - uuid: 9f2a0d4b3df041419067e2c10c3e8689
           name: 'FortiGate: General'
           pages:
@@ -6343,6 +7236,198 @@ zabbix_export:
                     - type: STRING
                       name: reference
                       value: HAG04
+        - uuid: 17bc72a41c084c7185bf5336393afa81
+          name: 'FortiGate: IPSec'
+          pages:
+            - name: 'IPSec tunnels'
+              widgets:
+                - type: item
+                  name: 'IPSec tunnels total'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.ipsec.tunnels.total
+                    - type: STRING
+                      name: reference
+                      value: IPSEC01
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: graph
+                  'y': '4'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: GRAPH
+                      name: graphid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        name: 'FortiGate: IPSec tunnels'
+                    - type: STRING
+                      name: reference
+                      value: IPSEC04
+                - type: problems
+                  name: 'IPSec problems'
+                  'y': '10'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: IPSEC06
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                - type: item
+                  name: 'IPSec tunnels up'
+                  x: '18'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.ipsec.tunnels.up
+                    - type: STRING
+                      name: reference
+                      value: IPSEC02
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: item
+                  name: 'IPSec tunnels down'
+                  x: '36'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.ipsec.tunnels.down
+                    - type: STRING
+                      name: reference
+                      value: IPSEC03
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '40'
+                - type: honeycomb
+                  name: 'IPSec tunnel states'
+                  x: '36'
+                  'y': '4'
+                  width: '36'
+                  height: '9'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'IPSec tunnel *: Status code'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^IPSec tunnel \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '21'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: IPSEC05
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '24'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: FFD54F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '2'
         - uuid: a1c7206d9312486b9d09dc9ef34ed98e
           name: 'FortiGate: Statistics'
           pages:
@@ -6533,6 +7618,23 @@ zabbix_export:
                       name: reference
                       value: AAAAK
       valuemaps:
+        - uuid: 628d36d95a6b4d24870c86f15b29cbac
+          name: 'BGP neighbor state'
+          mappings:
+            - value: '0'
+              newvalue: unknown
+            - value: '1'
+              newvalue: established
+            - value: '2'
+              newvalue: idle
+            - value: '3'
+              newvalue: connect
+            - value: '4'
+              newvalue: active
+            - value: '5'
+              newvalue: open-sent
+            - value: '6'
+              newvalue: open-confirm
         - uuid: 8b0c51b152b04ba690cd13e43a2c90d9
           name: 'Firewall policy action'
           mappings:
@@ -6672,6 +7774,15 @@ zabbix_export:
               newvalue: lan-extension
             - value: '30'
               newvalue: unknown
+        - uuid: b4f48000e8f64ed28068439641c9152b
+          name: 'IPSec tunnel status'
+          mappings:
+            - value: '0'
+              newvalue: down
+            - value: '1'
+              newvalue: up
+            - value: '2'
+              newvalue: unknown
         - uuid: 0e225b17b2e543f18fea31366d9b6286
           name: 'License status'
           mappings:
@@ -6742,6 +7853,15 @@ zabbix_export:
               newvalue: down
             - value: '1'
               newvalue: up
+        - uuid: 4da03d80f6994c2b9f5230814162a4a9
+          name: 'Sensor alarm status'
+          mappings:
+            - value: '0'
+              newvalue: ok
+            - value: '1'
+              newvalue: alarm
+            - value: '2'
+              newvalue: unknown
         - uuid: 176db78d3aa34c92893300d56eda5737
           name: 'Service state'
           mappings:
@@ -6804,6 +7924,23 @@ zabbix_export:
         - tag: scope
           value: availability
   graphs:
+    - uuid: d86121cd7757496fb48ea4c29ae2de24
+      name: 'FortiGate: BGP neighbors'
+      graph_items:
+        - color: 199C0D
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.bgp.neighbors.total
+        - sortorder: '1'
+          color: 00611C
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.bgp.neighbors.established
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.bgp.neighbors.not_established
     - uuid: e7cf2dc608fb463594298f1c710ba435
       name: 'FortiGate: CPU utilization'
       ymin_type_1: FIXED
@@ -6839,6 +7976,23 @@ zabbix_export:
           item:
             host: 'FortiGate by HTTP'
             key: fgate.fs.util
+    - uuid: 181e677e8b5f4dda91974a45e11d6ea8
+      name: 'FortiGate: IPSec tunnels'
+      graph_items:
+        - color: 199C0D
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.ipsec.tunnels.total
+        - sortorder: '1'
+          color: 00611C
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.ipsec.tunnels.up
+        - sortorder: '2'
+          color: F63100
+          item:
+            host: 'FortiGate by HTTP'
+            key: fgate.ipsec.tunnels.down
     - uuid: 25a31e8022864e8e95cb6587f3eefdb3
       name: 'FortiGate: Memory utilization'
       ymin_type_1: FIXED
