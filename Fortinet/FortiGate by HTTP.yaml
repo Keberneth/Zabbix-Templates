@@ -32,9 +32,13 @@ zabbix_export:
         Custom extension: HA cluster monitoring via FortiOS REST API. Adds HA member discovery, per-member items/triggers, and an HA diagnostics dashboard while keeping existing FortiGate monitoring items unchanged.
         
         Custom extension: BGP neighbor, IPSec tunnel, and hardware sensor alarm monitoring via FortiOS REST API with integrated dashboards.
+        
+        Improvement update: added no-data triggers for API master collectors, completed FortiGate hardware sensor API support with safe 404/empty-data handling for models that do not expose sensor probes, and added API health dashboard panels. Sensor no-data alerting is intentionally not used.
+        
+        API-only cleanup: existing ICMP and TCP simple checks were removed so this template uses FortiGate API collectors only.
       vendor:
         name: Keberneth
-        version: 7.0.4
+        version: 7.0.5
       groups:
         - name: 'Templates/Network devices'
       items:
@@ -71,9 +75,6 @@ zabbix_export:
               name: 'Unexpected response from API'
               priority: AVERAGE
               description: 'Received an unexpected response from API. It may be unavailable.'
-              dependencies:
-                - name: 'Port {$FGATE.API.PORT} is unavailable'
-                  expression: 'last(/FortiGate by HTTP/net.tcp.service["{$FGATE.SCHEME}","{$FGATE.API.FQDN}","{$FGATE.API.PORT}"])=0'
               tags:
                 - tag: scope
                   value: availability
@@ -143,6 +144,17 @@ zabbix_export:
               value: bgp
             - tag: component
               value: raw
+          triggers:
+            - uuid: 8fd33f5e0a6d41adbba0117c2c0aa56d
+              expression: 'nodata(/FortiGate by HTTP/fgate.bgp.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get BGP neighbors'
+              priority: WARNING
+              description: 'The API master collector item "Get BGP neighbors" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 88d91dfc32d040abb9236b5d4d0e9fd3
           name: 'BGP neighbors established'
           type: DEPENDENT
@@ -156,7 +168,7 @@ zabbix_export:
                   var obj = JSON.parse(value);
                   var results = Array.isArray(obj.results) ? obj.results : [];
                   var count = 0;
-                  results.forEach(function (n) {
+                  results.forEach(function  (n) {
                       if (String(n.state || '').toLowerCase() === 'established') {
                           count++;
                       }
@@ -183,7 +195,7 @@ zabbix_export:
                   var obj = JSON.parse(value);
                   var results = Array.isArray(obj.results) ? obj.results : [];
                   var count = 0;
-                  results.forEach(function (n) {
+                  results.forEach(function  (n) {
                       if (String(n.state || '').toLowerCase() !== 'established') {
                           count++;
                       }
@@ -470,6 +482,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: ac67b5d13bb145d493fc018ba7747763
+              expression: 'nodata(/FortiGate by HTTP/fgate.firmware.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get firmware info'
+              priority: WARNING
+              description: 'The API master collector item "Get firmware info" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 3d93f75ee3084a5487814c2175028229
           name: 'Free disk space'
           type: DEPENDENT
@@ -607,104 +630,104 @@ zabbix_export:
             var params = JSON.parse(value),
             	request = new HttpRequest(),
             	result = {"data": {}, "error": "" },
-            	api_url = "",
+            	api_url = "" ,
             	policies = {},
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
+             	Zabbix.log(4, '[ FortiGate  ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
-            	if (request.getStatus() !== 200) {
+            	if (request.getStatus() !== 200)  {
             		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
-            	if (response !== null) {
+            	if (response  !== null) {
             		try {
             			response = JSON.parse(response);
              		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
+            			throw 'Failed to parse response received  from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
-            	if (typeof response !== 'object' || response === null) {
+            	if (typeof response !== 'object' || response === null)  {
             		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw  'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined'  &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name  + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received   from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
              };
             
             try {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+            	['scheme', 'api.token', 'api.fqdn',  'api.port'].forEach(function (field) {
             		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key]  === '') {
+             		if (params[key] === macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key]  === 'undefined') {
-            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+             		if (typeof params[key]  === 'undefined') {
+            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro  value.';
              		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy  !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-             	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization:  Bearer ' + params.token);
             
             	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var firewall_data = getHttpData(
-            		api_url + '/api/v2/monitor/firewall/policy'
+             		api_url + '/api/v2/monitor/firewall/policy'
             	);
              
             	var firewall_list = getHttpData(
             		api_url + '/api/v2/cmdb/firewall/policy'
-            	);
+             	);
             
             	firewall_list.results.forEach(function  (v) {
             		var item = {};
-            		['q_origin_key',  'status', 'name', 'uuid', 'action', 'ip-version-type', 'label'].forEach(function  (k) {
+            		['q_origin_key',  'status', 'name', 'uuid', 'action',  'ip-version-type', 'label'].forEach(function  (k) {
             			item[k] = v[k];
             		});
-            		if (typeof item.name === 'undefined' || item.name === '') {
+            		if (typeof item.name === 'undefined' || item.name  === '') {
             			if  (typeof item.label !== 'undefined' && item.label !== '') {
             				item.name = item.label;
             			}
-            			else  if (typeof v.policyid !== 'undefined') {
+            			else   if (typeof v.policyid !== 'undefined') {
             				item.name = 'Policy ' + String(v.policyid);
             			}
-            			else  if (typeof item.uuid !== 'undefined' && item.uuid !== '') {
+            			else  if (typeof item.uuid  !== 'undefined' && item.uuid !== '') {
             				item.name = item.uuid;
             			}
             			else  {
             				item.name = 'Unnamed policy';
-            			}
+             			}
             		}
             		policies[v.policyid] = item;
             	});
             
             	result.data  = firewall_data.results.map(function (v) {
-            		if (typeof v.policyid !== 'undefined' && typeof policies[String(v.policyid)]  !== 'undefined') {
+            		if (typeof v.policyid  !== 'undefined' && typeof policies[String(v.policyid)]  !== 'undefined') {
             			Object.assign(v, policies[String(v.policyid)]);
-            		}
+            	 	}
             		return v;
             	}).filter(function  (v) {
             		if (typeof v.uuid !== 'undefined' && v.uuid !== '') {
             			return v;
             		}
-            	});
+            	 });
             } catch (error)  {
             	error_msg = error.toString();
             	error_msg += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate  ] ERROR: ' + error_msg);
+            	Zabbix.log(3, '[ FortiGate   ] ERROR: ' + error_msg);
             };
             
             result.error = error_msg;
@@ -726,6 +749,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: d4bec00285944a3b990164a08a316e28
+              expression: 'nodata(/FortiGate by HTTP/fgate.fwp.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get firewall data'
+              priority: WARNING
+              description: 'The API master collector item "Get firewall data" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 3f64a182d90747f09ed1dbe80bdbd575
           name: 'HA data item errors'
           type: DEPENDENT
@@ -826,193 +860,193 @@ zabbix_export:
                 result = {
                     data: {
                         config: {
-                            enabled: 0,
+                             enabled: 0,
                             mode: 'standalone',
                             mode_num: 0,
                             group_id: 0,
-                            group_name: ''
+                             group_name: ''
                         },
                         cluster: {
                             members_count: 0,
                             primary: '',
-                            status: 1,
+                             status: 1,
                             sync_status: 1,
                             state: 1,
                             failover_ready: 2,
-                            failover_reason: 'HA disabled or standalone'
+                             failover_reason: 'HA disabled or standalone'
                         },
                         members: [],
                         members_lld: []
                     },
-                    error: ''
+                     error: ''
                 },
                 api_url = '',
                 error_msg = '',
                 errors = [],
                 member_map = {},
-                member_key_by_serial = {},
+                member_key_by_serial =  {},
                 member_key_by_hostname = {},
                 expected_members = 0;
             
             function getHttpData(url) {
                 var response = request.get(url);
-                Zabbix.log(4, '[ FortiGate HA ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+                 Zabbix.log(4, '[ FortiGate HA ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
             
-                if (request.getStatus() !== 200) {
-                    throw 'Failed to receive data from ' + url + ': invalid response status code ' +  request.getStatus() + '.';
+                 if (request.getStatus() !== 200) {
+                    throw 'Failed to receive data from ' + url + ': invalid response status code ' +  request.getStatus()  + '.';
                 }
             
                 if (response !== null) {
                     try {
                         response = JSON.parse(response);
                     }
-                    catch (error) {
+                    catch  (error) {
                         throw 'Failed to parse response received from FortiGate API.';
                     }
                 }
             
-                if (typeof response !== 'object' || response === null) {
+                if (typeof response !==  'object' || response === null) {
                     throw 'Cannot process response data: received data is not an object.';
                 }
             
-                if (typeof response.status !== 'undefined' && response.status !== 'success') {
-                    throw 'FortiGate API returned non-success status for ' + url + '.';
+                if (typeof  response.status !== 'undefined' && response.status !== 'success') {
+                    throw 'FortiGate API returned non-success status for '  + url + '.';
                 }
             
                 if (typeof response.results === 'undefined' && typeof response.data === 'undefined') {
-                    throw 'Cannot process response data from ' + url + ': missing results field.';
+                    throw 'Cannot  process response data from ' + url + ': missing results field.';
                 }
             
                 return response;
             }
             
-            function getFirst(paths, required, label) {
+            function getFirst(paths, required,  label) {
                 var last_error = '';
                 for (var i = 0; i < paths.length; i++) {
                     try {
-                        return getHttpData(api_url + paths[i]);
+                        return getHttpData(api_url  + paths[i]);
                     }
                     catch (error) {
                         last_error = error.toString();
-                        Zabbix.log(3, '[ FortiGate HA ] ' + label + ' endpoint failed: ' + last_error);
+                        Zabbix.log(3, '[ FortiGate  HA ] ' + label + ' endpoint failed: ' + last_error);
                     }
                 }
                 if (required) {
                      throw label + ': ' + last_error;
-                }
+                 }
                 return null;
             }
             
             function unwrap(response) {
                 if (response === null || typeof response === 'undefined') {
-                    return null;
+                    return  null;
                 }
                 if (typeof response.results !== 'undefined') {
                     return response.results;
                 }
-                if (typeof response.data !== 'undefined') {
+                if (typeof response.data  !== 'undefined') {
                     return response.data;
                 }
                 return response;
             }
             
             function hasOwn(obj, key) {
-                return Object.prototype.hasOwnProperty.call(obj, key);
+                return Object.prototype.hasOwnProperty.call(obj,  key);
             }
             
             function getValue(obj, keys, def) {
                 if (typeof obj !== 'object' || obj === null) {
                     return def;
                 }
-                for (var i = 0; i < keys.length; i++) {
+                 for (var i = 0; i < keys.length; i++) {
                     var k = keys[i];
-                    if (hasOwn(obj, k) && obj[k] !== null && typeof obj[k] !== 'undefined' && obj[k] !== '') {
+                    if (hasOwn(obj, k) && obj[k] !== null && typeof obj[k] !==  'undefined' && obj[k] !== '') {
                         return obj[k];
                     }
                 }
                 return def;
             }
             
-            function toStringValue(v, def) {
+            function toStringValue(v, def)  {
                 if (v === null || typeof v === 'undefined') {
                     return def;
                 }
                 return String(v);
             }
             
-            function toNumber(v, def) {
+            function toNumber(v, def)  {
                 if (v === null || typeof v === 'undefined' || v === '') {
                     return def;
                 }
                 if (typeof v === 'boolean') {
-                    return v ? 1 : 0;
+                     return v ? 1 : 0;
                 }
                 if (typeof  v === 'number') {
                     return v;
                 }
-                var s = String(v).replace(/%/g, '').replace(/,/g, '').trim();
+                var s = String(v).replace(/%/g, '').replace(/,/g,  '').trim();
                 var n = parseFloat(s);
                 return isNaN(n) ? def : n;
             }
             
             function toInteger(v, def) {
-                var n = toNumber(v, def);
+                var n = toNumber(v,  def);
                 return (n === def) ? def : Math.round(n);
             }
             
             function modeToNum(mode) {
                 var m = String(mode || '').toLowerCase();
-                if (m === '' || m === 'standalone' || m === 'none' || m === 'disable' || m === 'disabled') {
+                 if (m === '' || m === 'standalone' || m === 'none' || m === 'disable' || m === 'disabled') {
                     return 0;
                 }
-                if (m === 'a-p' || m === 'ap' || m.indexOf('passive') !== -1 || m.indexOf('active-passive') !== -1) {
+                if (m  === 'a-p' || m === 'ap' || m.indexOf('passive') !== -1 || m.indexOf('active-passive') !== -1) {
                     return 1;
                 }
-                if (m === 'a-a' || m === 'aa' || m.indexOf('active-active') !== -1) {
+                if (m  === 'a-a' || m === 'aa' || m.indexOf('active-active') !== -1) {
                     return 2;
                 }
                 return 3;
             }
             
-            function enabledFromMode(mode) {
+            function enabledFromMode(mode)  {
                 return modeToNum(mode) === 0 ? 0 : 1;
             }
             
             function cleanKey(s, fallback) {
-                s = String(s || fallback || 'unknown').replace(/^\s+|\s+$/g, '');
+                s = String(s || fallback || 'unknown').replace(/^\ s+|\s+$/g, '');
                 if (s === '') {
                     s = String(fallback || 'unknown');
                 }
                 s = s.replace(/[^A-Za-z0-9_.-]/g, '_');
-                if (s.length > 180) {
+                 if (s.length > 180) {
                     s = s.substring(0, 180);
                 }
                 return s;
             }
             
             function looksLikeSerial(s) {
-                s = String(s || '');
+                s = String(s  || '');
                  if (s === '' || s === 'root' || s === 'global' || s === 'vdom' || s === 'results' || s === 'members') {
-                    return false;
+                    return  false;
                 }
                 return /^[A-Za-z0-9][A-Za-z0-9_.-]{7,}$/.test(s);
             }
             
             function normalizeRole(v) {
-                if (typeof v === 'boolean') {
+                if (typeof v === 'boolean')  {
                     return v ? 1 : 2;
                 }
                 if (typeof v === 'number') {
                     if (v === 1) { return 1; }
-                    if (v === 2) { return 2; }
+                    if (v === 2) { return  2; }
                     if (v === 0) { return 0; }
                 }
                 var s = String(v || '').toLowerCase();
                 if (s === '') { return 0; }
-                if (s === '1' || s.indexOf('primary') !== -1 || s.indexOf('master') !== -1 || s.indexOf('root') !== -1 || s === 'main') {
-                    return 1;
+                if  (s === '1' || s.indexOf('primary') !== -1 || s.indexOf('master') !== -1 || s.indexOf('root') !== -1 || s === 'main') {
+                    return  1;
                 }
-                if (s === '2' || s.indexOf('secondary') !== -1 || s.indexOf('slave') !== -1 || s.indexOf('backup') !== -1 || s.indexOf('subordinate') !== -1) {
+                if (s === '2' || s.indexOf('secondary') !== -1 || s.indexOf('slave') !== -1 || s.indexOf('backup') !== -1 || s.indexOf('subordinate')  !== -1) {
                     return 2;
                 }
                 if (s.indexOf('standalone') !== -1) {
@@ -1021,154 +1055,154 @@ zabbix_export:
                 return 0;
             }
             
-            function roleToText(n) {
+            function  roleToText(n) {
                 if (n === 1) { return 'primary'; }
                 if (n === 2) { return 'secondary'; }
-                if (n === 3) { return 'standalone'; }
+                if (n === 3) { return 'standalone';  }
                 return 'unknown';
             }
             
             function normalizeState(v, def) {
                 if (typeof v === 'boolean') {
                      return v ? 1 : 0;
-                }
+                 }
                 if (typeof v === 'number') {
                     if (v === 1) { return 1; }
                     if (v === 0) { return 0; }
                     return 2;
-                }
+                 }
                 var s = String(v || '').toLowerCase();
                 if (s === '') { return def; }
-                if (s === '1' || s.indexOf('up') !== -1 || s.indexOf('online') !== -1 || s.indexOf('alive') !== -1 || s.indexOf('running') !== -1 || s.indexOf('ok') !== -1 || s.indexOf('healthy') !== -1 || s.indexOf('active') !== -1) {
+                if (s === '1' || s.indexOf('up') !== -1 || s.indexOf('online')  !== -1 || s.indexOf('alive') !== -1 || s.indexOf('running') !== -1 || s.indexOf('ok') !== -1 || s.indexOf('healthy') !== -1 || s.indexOf('active')  !== -1) {
                     return 1;
                 }
-                if (s === '0' || s.indexOf('down') !== -1 || s.indexOf('offline') !== -1 || s.indexOf('dead') !== -1 || s.indexOf('fail') !== -1 || s.indexOf('error') !== -1 || s.indexOf('lost') !== -1 || s.indexOf('unavailable') !== -1) {
-                    return 0;
+                if (s === '0' || s.indexOf('down') !== -1 || s.indexOf('offline') !== -1 || s.indexOf('dead')  !== -1 || s.indexOf('fail') !== -1 || s.indexOf('error') !== -1 || s.indexOf('lost') !== -1 || s.indexOf('unavailable') !== -1) {
+                     return 0;
                 }
                 return 2;
             }
             
             function stateToText(n) {
                 if (n === 1) { return 'up'; }
-                if (n === 0) { return 'down'; }
+                if (n === 0) { return  'down'; }
                 return 'unknown';
             }
             
             function normalizeSync(v) {
                 if (typeof v === 'boolean') {
                     return v ? 1 : 0;
-                }
+                 }
                 if (typeof v === 'number') {
                     if (v === 1) { return 1; }
                     if (v === 0) { return 0; }
                     return 2;
-                }
+                 }
                 var s = String(v || '').toLowerCase();
                 if (s === '') { return  2; }
-                if (s.indexOf('out') !== -1 || s.indexOf('not') !== -1 || s.indexOf('unsync') !== -1 || s.indexOf('mismatch') !== -1 || s.indexOf('different') !== -1 || s.indexOf('fail') !== -1 || s.indexOf('error') !== -1) {
+                if (s.indexOf('out') !== -1 || s.indexOf('not')  !== -1 || s.indexOf('unsync') !== -1 || s.indexOf('mismatch') !== -1 || s.indexOf('different') !== -1 || s.indexOf('fail') !== -1 ||  s.indexOf('error') !== -1) {
                     return 0;
                 }
-                if (s === '1' || s.indexOf('in-sync') !== -1 || s.indexOf('in sync') !== -1 || s.indexOf('synchronized') !== -1 || s.indexOf('synchronised') !== -1 || s.indexOf('sync') !== -1 || s.indexOf('same') !== -1 || s.indexOf('ok') !== -1) {
+                if (s === '1' || s.indexOf('in-sync') !== -1 || s.indexOf('in sync') !==  -1 || s.indexOf('synchronized') !== -1 || s.indexOf('synchronised') !== -1 || s.indexOf('sync') !== -1 || s.indexOf('same') !== -1 ||  s.indexOf('ok') !== -1) {
                     return 1;
                 }
                 return 2;
             }
             
             function syncToText(n) {
-                if (n === 1) { return 'in-sync'; }
+                if (n === 1) { return 'in-sync';  }
                 if (n === 0) { return 'out-of-sync'; }
                 return 'unknown';
             }
             
             
             function checksumScalar(v) {
-                if (v === null || typeof v === 'undefined') {
+                if (v === null || typeof  v === 'undefined') {
                     return '';
                 }
                 if (typeof v === 'boolean') {
                     return v ? 'true' : 'false';
                 }
-                if (typeof v === 'number') {
+                 if (typeof v === 'number') {
                     return String(v);
                 }
                 var s = String(v).replace(/^\s+|\s+$/g, '').toLowerCase();
-                if (s === '') {
+                 if (s === '') {
                     return '';
                 }
                 return s;
             }
             
             function normalizeChecksum(value) {
-                if (value === null || typeof value === 'undefined') {
+                if (value === null || typeof  value === 'undefined') {
                     return '';
                 }
                 if (Array.isArray(value))  {
                     var arr = [];
-                    for (var i = 0; i < value.length; i++) {
+                    for (var i = 0;  i < value.length; i++) {
                         var av = normalizeChecksum(value[i]);
                         if (av !== '') {
                             arr.push(av);
-                        }
+                         }
                     }
                     return arr.join(',');
                 }
                 if (typeof value === 'object') {
                     var parts = [];
-                    for (var k in value) {
+                     for (var k in value) {
                         if (hasOwn(value, k)) {
                             var cv = normalizeChecksum(value[k]);
-                            if (cv !== '') {
+                             if (cv !== '') {
                                 parts.push(String(k).toLowerCase() + ':' + cv);
                             }
                         }
                     }
-                    parts.sort();
+                     parts.sort();
                     return parts.join('|');
                 }
                 return checksumScalar(value);
             }
             
-            function extractChecksumInfo(src) {
+            function extractChecksumInfo(src)  {
                 var checksum = {},
                     base = getValue(src, ['checksum', 'checksums'], ''),
                     v;
             
-                if (typeof base === 'object' && base !== null) {
+                if (typeof base === 'object'  && base !== null) {
                     checksum = base;
                 }
                 else if (base !== '') {
                     checksum.all = base;
                 }
             
-                v = getValue(src, ['all', 'checksum_all', 'all_checksum'], '');
+                v = getValue(src,  ['all', 'checksum_all', 'all_checksum'], '');
                 if (v !== '') { checksum.all = v; }
             
-                v = getValue(src, ['global', 'checksum_global', 'global_checksum'], '');
+                v = getValue(src, ['global', 'checksum_global',  'global_checksum'], '');
                 if (v !== '') {  checksum.global = v; }
             
-                v = getValue(src, ['root', 'checksum_root', 'root_checksum'], '');
+                v = getValue(src, ['root', 'checksum_root', 'root_checksum'],  '');
                 if (v !== '') { checksum.root = v; }
             
                 return {
                     norm: normalizeChecksum(checksum),
-                    all: normalizeChecksum(getValue(checksum, ['all', 'checksum_all', 'all_checksum'], '')),
-                    global: normalizeChecksum(getValue(checksum, ['global', 'checksum_global', 'global_checksum'], '')),
+                    all: normalizeChecksum(getValue(checksum,  ['all', 'checksum_all', 'all_checksum'], '')),
+                    global: normalizeChecksum(getValue(checksum, ['global', 'checksum_global', 'global_checksum'],  '')),
                     root: normalizeChecksum(getValue(checksum, ['root', 'checksum_root', 'root_checksum'], ''))
                 };
             }
             
-            function keyFor(serial, hostname, idx) {
+            function keyFor(serial,  hostname, idx) {
                 var existing = '';
                 if (serial && hasOwn(member_key_by_serial, serial)) {
                     return member_key_by_serial[serial];
-                }
+                 }
                 if (hostname && hasOwn(member_key_by_hostname, hostname)) {
                     return member_key_by_hostname[hostname];
                 }
-                var base = cleanKey(serial || hostname || ('member_' + idx), 'member_' + idx);
+                 var base = cleanKey(serial || hostname || ('member_' + idx), 'member_' + idx);
                 var key = base;
                 var i = 2;
-                while (hasOwn(member_map, key)) {
+                while (hasOwn(member_map,  key)) {
                     key = base + '_' + i;
                     i++;
                 }
@@ -1176,161 +1210,161 @@ zabbix_export:
             }
             
             function rememberIndexes(m) {
-                if (m.serial) {
+                if (m.serial)  {
                     member_key_by_serial[m.serial] = m.key;
                 }
                 if (m.hostname) {
                      member_key_by_hostname[m.hostname] = m.key;
-                }
+                 }
             }
             
             function mergeMember(src, source, parentKey) {
                 if (typeof src !== 'object' || src === null) {
                     return;
-                }
+                 }
             
-                var serial = toStringValue(getValue(src, ['serial', 'serial_no', 'serial-number', 'serial_number', 'sn', 'devid', 'device_id', 'device-id', 'member_serial'], ''), '');
+                var serial = toStringValue(getValue(src, ['serial', 'serial_no', 'serial-number', 'serial_number', 'sn', 'devid', 'device_id',  'device-id', 'member_serial'], ''), '');
                 if (serial === '' && looksLikeSerial(parentKey)) {
                     serial = String(parentKey);
-                }
+                 }
             
-                var hostname = toStringValue(getValue(src, ['hostname', 'host_name', 'host-name', 'name', 'device_name', 'devname', 'member_name'], ''), '');
+                var hostname = toStringValue(getValue(src, ['hostname', 'host_name', 'host-name', 'name', 'device_name', 'devname', 'member_name'],  ''), '');
                 if (hostname === '' && serial !== '' && !looksLikeSerial(parentKey)) {
                     hostname = serial;
                 }
-                if (serial === '' && hostname === '') {
+                if (serial  === '' && hostname === '') {
                     return;
                 }
             
                 var key = keyFor(serial, hostname, Object.keys(member_map).length + 1);
-                var m = member_map[key] || {
+                 var m = member_map[key] || {
                     key: key,
                     serial: serial || hostname,
                     hostname: hostname || serial,
-                    role: 0,
+                     role: 0,
                     role_text: 'unknown',
                     state: 1,
                     state_text: 'up',
                     sync: 2,
                     sync_text: 'unknown',
-                    seen_stats: 0,
+                     seen_stats: 0,
                     seen_checksum: 0,
                      seen_peer: 0,
                     priority: 0,
                     vdom: '',
-                    cpu_usage: 0,
+                    cpu_usage:  0,
                     mem_usage: 0,
                     net_usage: 0,
                     sessions: 0,
                     traffic_bytes: 0,
                     packets: 0,
-                    virus_events: 0,
+                    virus_events:  0,
                     ips_events: 0,
                     uptime: 0,
                     checksum_norm: '',
                     checksum_all: '',
                     checksum_global: '',
-                    checksum_root: ''
+                     checksum_root: ''
                 };
             
                 if (serial !== '') { m.serial = serial; }
-                if (hostname !== '') { m.hostname = hostname; }
+                if (hostname !== '') { m.hostname = hostname;  }
                 if (source === 'ha-statistics') { m.seen_stats = 1; }
                 if (source === 'ha-checksums') { m.seen_checksum = 1; }
-                if (source === 'ha-peer') { m.seen_peer = 1; }
+                if (source  === 'ha-peer') { m.seen_peer = 1; }
             
-                var role_candidate = getValue(src, ['role', 'ha_role', 'cluster_role', 'member_role', 'ha_state'], '');
+                var role_candidate = getValue(src, ['role', 'ha_role', 'cluster_role', 'member_role', 'ha_state'],  '');
                 if (role_candidate === '') {
-                    var primary_candidate = getValue(src, ['primary', 'Primary', 'is_primary', 'is_master', 'is_root_master', 'is_manage_master', 'root_master', 'manage_master'], '');
+                    var primary_candidate = getValue(src, ['primary', 'Primary', 'is_primary', 'is_master',  'is_root_master', 'is_manage_master', 'root_master', 'manage_master'], '');
                     if (primary_candidate !== '') {
-                        role_candidate = primary_candidate;
+                        role_candidate  = primary_candidate;
                     }
                 }
                 var role_num = normalizeRole(role_candidate);
                 if (role_num !== 0) {
-                    m.role = role_num;
+                    m.role  = role_num;
                      m.role_text = roleToText(role_num);
                 }
             
-                var sync_candidate = getValue(src, ['sync_status', 'sync-state', 'sync_state', 'sync', 'configuration_status', 'configuration-status', 'cfg_sync', 'conf_sync', 'checksum_status', 'checksum-status', 'checksum'], '');
+                var sync_candidate = getValue(src, ['sync_status', 'sync-state',  'sync_state', 'sync', 'configuration_status', 'configuration-status', 'cfg_sync', 'conf_sync', 'checksum_status', 'checksum-status',  'checksum'], '');
                 var sync_num = normalizeSync(sync_candidate);
                 if (sync_num !== 2) {
                     m.sync = sync_num;
-                    m.sync_text = syncToText(sync_num);
+                     m.sync_text = syncToText(sync_num);
                 }
             
-                var state_candidate = getValue(src, ['state', 'connection', 'connection_status', 'connection-status', 'health', 'member_state', 'member-state'], '');
+                var state_candidate = getValue(src, ['state', 'connection', 'connection_status',  'connection-status', 'health', 'member_state', 'member-state'], '');
                 if (state_candidate === '') {
-                    var status_candidate = getValue(src, ['status'], '');
+                    var status_candidate  = getValue(src, ['status'], '');
                     var status_role = normalizeRole(status_candidate);
                     var status_sync = normalizeSync(status_candidate);
-                    if (status_role === 0 && status_sync === 2) {
+                     if (status_role === 0 && status_sync === 2) {
                         state_candidate = status_candidate;
                     }
                 }
-                var state_num = normalizeState(state_candidate, 1);
+                var state_num  = normalizeState(state_candidate, 1);
                 m.state = state_num;
                 m.state_text = stateToText(state_num);
             
-                m.priority = toInteger(getValue(src, ['priority', 'prio', 'ha_priority', 'device_priority'], m.priority), m.priority);
-                m.vdom  = toStringValue(getValue(src, ['vdom', 'vd'], m.vdom), m.vdom);
-                m.cpu_usage = toNumber(getValue(src, ['cpu_usage', 'cpu', 'cpu_usage_percent', 'cpu_percent', 'cpu-usage'], m.cpu_usage), m.cpu_usage);
-                m.mem_usage = toNumber(getValue(src, ['mem_usage', 'memory_usage', 'memory', 'mem', 'mem_usage_percent', 'memory_percent', 'mem-usage'], m.mem_usage), m.mem_usage);
-                m.net_usage = toNumber(getValue(src, ['net_usage', 'network_usage', 'network', 'network_usage_percent', 'net-usage'], m.net_usage), m.net_usage);
-                m.sessions = toInteger(getValue(src, ['sessions', 'session', 'session_count', 'session-count'], m.sessions), m.sessions);
-                m.traffic_bytes = toNumber(getValue(src, ['tbyte', 'traffic_bytes', 'traffic', 'bytes', 'total_bytes', 'total-bytes'], m.traffic_bytes), m.traffic_bytes);
-                m.packets = toNumber(getValue(src, ['packets', 'packet', 'total_packets', 'total-packets'], m.packets), m.packets);
-                m.virus_events = toNumber(getValue(src, ['virus_events', 'virus', 'virus-events'], m.virus_events), m.virus_events);
-                m.ips_events = toNumber(getValue(src, ['ips_events', 'ips', 'ips-events'], m.ips_events), m.ips_events);
+                m.priority = toInteger(getValue(src,  ['priority', 'prio', 'ha_priority', 'device_priority'], m.priority), m.priority);
+                m.vdom  = toStringValue(getValue(src, ['vdom',  'vd'], m.vdom), m.vdom);
+                m.cpu_usage = toNumber(getValue(src, ['cpu_usage', 'cpu', 'cpu_usage_percent', 'cpu_percent', 'cpu-usage'],  m.cpu_usage), m.cpu_usage);
+                m.mem_usage = toNumber(getValue(src, ['mem_usage', 'memory_usage', 'memory', 'mem', 'mem_usage_percent',  'memory_percent', 'mem-usage'], m.mem_usage), m.mem_usage);
+                m.net_usage = toNumber(getValue(src, ['net_usage', 'network_usage',  'network', 'network_usage_percent', 'net-usage'], m.net_usage), m.net_usage);
+                m.sessions = toInteger(getValue(src, ['sessions',  'session', 'session_count', 'session-count'], m.sessions), m.sessions);
+                m.traffic_bytes = toNumber(getValue(src, ['tbyte', 'traffic_bytes',  'traffic', 'bytes', 'total_bytes', 'total-bytes'], m.traffic_bytes), m.traffic_bytes);
+                m.packets = toNumber(getValue(src, ['packets',  'packet', 'total_packets', 'total-packets'], m.packets), m.packets);
+                m.virus_events = toNumber(getValue(src, ['virus_events', 'virus',  'virus-events'], m.virus_events), m.virus_events);
+                m.ips_events = toNumber(getValue(src, ['ips_events', 'ips', 'ips-events'], m.ips_events),  m.ips_events);
                 m.uptime = toNumber(getValue(src,  ['uptime', 'up_time', 'uptime_seconds', 'uptime-seconds'], m.uptime), m.uptime);
-            
+             
                 var checksum_info = extractChecksumInfo(src);
                 if (checksum_info.norm !== '') {
                     m.checksum_norm = checksum_info.norm;
-                    m.checksum_all = checksum_info.all;
+                     m.checksum_all = checksum_info.all;
                     m.checksum_global = checksum_info.global;
                     m.checksum_root = checksum_info.root;
-                }
+                 }
             
                 member_map[key] = m;
                 rememberIndexes(m);
             }
             
             function looksLikeMemberObject(obj, parentKey) {
-                if (typeof obj !== 'object' || obj === null) {
+                if (typeof obj  !== 'object' || obj === null) {
                     return false;
                 }
-                if (getValue(obj, ['hostname', 'host_name', 'name', 'serial', 'serial_no', 'serial-number', 'serial_number', 'sn'], '') !== '') {
+                if (getValue(obj, ['hostname', 'host_name', 'name', 'serial', 'serial_no',  'serial-number', 'serial_number', 'sn'], '') !== '') {
                     return true;
                 }
                 if (looksLikeSerial(parentKey) && (
-                    typeof obj.cpu_usage !== 'undefined' ||
+                     typeof obj.cpu_usage !== 'undefined' ||
                     typeof obj.mem_usage !== 'undefined' ||
-                    typeof obj.sessions !== 'undefined' ||
+                    typeof obj.sessions !== 'undefined'  ||
                     typeof obj.tbyte !== 'undefined' ||
                     typeof obj.priority !== 'undefined')) {
                     return true;
                 }
-                return false;
+                return  false;
             }
             
             function walkMembers(obj, source, parentKey) {
                 if (obj === null || typeof obj === 'undefined') {
                     return;
-                }
+                 }
                 if  (Array.isArray(obj)) {
                     for (var i = 0; i < obj.length; i++) {
                         walkMembers(obj[i], source, parentKey);
-                    }
+                     }
                     return;
                 }
                 if (typeof obj === 'object') {
                     if (looksLikeMemberObject(obj, parentKey)) {
-                        mergeMember(obj, source, parentKey);
+                         mergeMember(obj, source, parentKey);
                         return;
                     }
                     for (var k in obj) {
-                        if (hasOwn(obj, k)) {
+                        if (hasOwn(obj,  k)) {
                             walkMembers(obj[k], source, k);
                         }
                     }
@@ -1338,29 +1372,29 @@ zabbix_export:
             }
             
             function findRootMaster(obj) {
-                if (obj === null || typeof obj === 'undefined') {
+                if  (obj === null || typeof obj === 'undefined') {
                     return '';
                 }
                 if (Array.isArray(obj)) {
-                    for (var i = 0; i < obj.length; i++) {
+                    for (var i = 0; i  < obj.length; i++) {
                         var v = findRootMaster(obj[i]);
                         if (v !== '') { return v; }
                     }
-                    return '';
+                    return  '';
                 }
                 if (typeof obj === 'object') {
-                    var serial = getValue(obj, ['serial', 'serial_no', 'serial-number', 'serial_number', 'sn'], '');
+                    var serial = getValue(obj, ['serial', 'serial_no', 'serial-number', 'serial_number',  'sn'], '');
                     var primary = getValue(obj, ['root_master', 'is_root_master', 'primary', 'Primary', 'is_primary'], '');
-                    if (primary !== '' && (primary === true || String(primary) === '1' || String(primary).toLowerCase() === 'true') && serial !== '')  {
+                     if (primary !== '' && (primary === true || String(primary) === '1' || String(primary).toLowerCase() === 'true') && serial !== '')   {
                         return String(serial);
                     }
-                    if (hasOwn(obj, 'root_master') && typeof obj.root_master !== 'object' && obj.root_master !== true && obj.root_master !== false) {
+                    if (hasOwn(obj, 'root_master') && typeof obj.root_master !== 'object' &&  obj.root_master !== true && obj.root_master !== false) {
                         return String(obj.root_master);
                     }
-                    for (var k in obj) {
+                    for (var k  in obj) {
                         if (hasOwn(obj, k)) {
                             var r = findRootMaster(obj[k]);
-                            if (r !== '') { return r; }
+                            if (r !== '') { return  r; }
                         }
                     }
                 }
@@ -1368,119 +1402,119 @@ zabbix_export:
             }
             
             expected_members = parseInt(params.expected_members || '0', 10);
-            if (isNaN(expected_members)) {
+            if (isNaN(expected_members))  {
                 expected_members = 0;
             }
             
             try {
                 ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
-                    var macro = '{$FGATE.' + field.toUpperCase() + '}';
+                    var  macro = '{$FGATE.' + field.toUpperCase() + '}';
                     var key = field.split('.').pop();
-                    if (params[key] === macro || params[key] === '') {
+                    if (params[key] === macro || params[key]  === '') {
                         throw 'Please change ' + macro + ' macro to the proper value.';
                     }
-                    if (typeof params[key] === 'undefined') {
+                    if (typeof params[key] ===  'undefined') {
                         throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
                     }
-                });
+                 });
             
-                if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
+                if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !==  '') {
                     request.setProxy(params.http_proxy);
                 }
             
                 request.addHeader('Accept: application/json');
-                request.addHeader('Authorization: Bearer ' + params.token);
+                request.addHeader('Authorization:  Bearer ' + params.token);
             
                 api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
             
                 var ha_config = getFirst([
-                    '/api/v2/cmdb/system/ha'
+                     '/api/v2/cmdb/system/ha'
                 ], true, 'HA configuration');
             
                 var config = unwrap(ha_config);
-                var mode = toStringValue(getValue(config, ['mode'], 'standalone'), 'standalone');
+                var mode = toStringValue(getValue(config,  ['mode'], 'standalone'), 'standalone');
                 result.data.config.mode = mode;
                 result.data.config.mode_num = modeToNum(mode);
-                result.data.config.enabled = enabledFromMode(mode);
-                result.data.config.group_id = toInteger(getValue(config, ['group-id', 'group_id', 'group'], 0), 0);
+                 result.data.config.enabled = enabledFromMode(mode);
+                result.data.config.group_id = toInteger(getValue(config, ['group-id', 'group_id',  'group'], 0), 0);
                 result.data.config.group_name = toStringValue(getValue(config, ['group-name', 'group_name'], ''), '');
             
-                if (result.data.config.enabled === 1) {
+                 if (result.data.config.enabled === 1) {
                     var ha_stats = getFirst([
                         '/api/v2/monitor/system/ha-statistics/select/',
-                        '/api/v2/monitor/system/ha-statistics/select',
+                         '/api/v2/monitor/system/ha-statistics/select',
                         '/api/v2/monitor/system/ha-statistics'
-                    ], true, 'HA statistics');
+                    ], true, 'HA  statistics');
                     walkMembers(unwrap(ha_stats),  'ha-statistics', '');
             
                     var ha_peer = getFirst([
                         '/api/v2/monitor/system/ha-peer/select/',
-                        '/api/v2/monitor/system/ha-peer/select',
+                         '/api/v2/monitor/system/ha-peer/select',
                         '/api/v2/monitor/system/ha-peer'
                     ], false, 'HA peer');
-                    walkMembers(unwrap(ha_peer), 'ha-peer', '');
+                     walkMembers(unwrap(ha_peer), 'ha-peer', '');
             
                     var ha_checksums = getFirst([
                         '/api/v2/monitor/system/ha-checksums/select/',
-                        '/api/v2/monitor/system/ha-checksums/select',
+                         '/api/v2/monitor/system/ha-checksums/select',
                         '/api/v2/monitor/system/ha-checksums'
                     ], false, 'HA checksums');
-                    var checksum_results = unwrap(ha_checksums);
+                     var checksum_results = unwrap(ha_checksums);
                     walkMembers(checksum_results, 'ha-checksums', '');
             
-                    var root_master = findRootMaster(checksum_results);
+                    var root_master  = findRootMaster(checksum_results);
                     if (root_master !== '') {
                         for (var mk in member_map) {
-                            if (hasOwn(member_map, mk)) {
+                            if  (hasOwn(member_map, mk)) {
                                 var m = member_map[mk];
-                                if (m.serial === root_master || m.hostname === root_master || m.key === cleanKey(root_master, root_master)) {
+                                if (m.serial === root_master || m.hostname  === root_master || m.key === cleanKey(root_master, root_master)) {
                                     m.role = 1;
-                                    m.role_text = 'primary';
+                                    m.role_text  = 'primary';
                                 }
                                 else if (m.role === 0) {
                                      m.role = 2;
-                                    m.role_text = 'secondary';
+                                     m.role_text = 'secondary';
                                 }
                             }
                         }
                     }
             
-                    var reference_checksum = '';
+                    var reference_checksum  = '';
                     for (var ck in member_map) {
                         if (hasOwn(member_map, ck)) {
                             var cm = member_map[ck];
-                            if (cm.role === 1 && cm.checksum_norm !== '') {
+                             if (cm.role === 1 && cm.checksum_norm !== '') {
                                 reference_checksum = cm.checksum_norm;
-                                break;
+                                 break;
                             }
                         }
                     }
                     if (reference_checksum === '') {
-                        for (var fk in member_map) {
+                        for (var fk in  member_map) {
                             if (hasOwn(member_map, fk) && member_map[fk].checksum_norm !== '') {
-                                reference_checksum = member_map[fk].checksum_norm;
+                                reference_checksum  = member_map[fk].checksum_norm;
                                 break;
                             }
                         }
                     }
-                    if (reference_checksum !== '') {
+                    if (reference_checksum  !== '') {
                         for (var sk in member_map) {
-                            if (hasOwn(member_map, sk) && member_map[sk].checksum_norm !== '') {
+                            if (hasOwn(member_map, sk) && member_map[sk].checksum_norm !==  '') {
                                 member_map[sk].sync = (member_map[sk].checksum_norm === reference_checksum) ? 1 : 0;
-                                member_map[sk].sync_text = syncToText(member_map[sk].sync);
+                                 member_map[sk].sync_text = syncToText(member_map[sk].sync);
                              }
                         }
                     }
             
-                    for (var ok in member_map) {
+                    for (var ok in  member_map) {
                         if (hasOwn(member_map, ok)) {
                             var om = member_map[ok];
-                            if ((om.seen_stats === 1 || om.seen_checksum === 1) && om.state === 2) {
+                            if ((om.seen_stats  === 1 || om.seen_checksum === 1) && om.state === 2) {
                                 om.state = 1;
                                 om.state_text = stateToText(om.state);
-                            }
+                             }
                             if (om.seen_peer === 1 && om.seen_stats !== 1 && om.seen_checksum !== 1) {
-                                om.state = 0;
+                                om.state  = 0;
                                 om.state_text = stateToText(om.state);
                             }
                         }
@@ -1488,95 +1522,95 @@ zabbix_export:
             
                 }
             
-                var members = [];
+                var members  = [];
                 for (var key in member_map) {
                     if (hasOwn(member_map, key)) {
                         members.push(member_map[key]);
-                    }
+                     }
                 }
             
                 members.sort(function (a, b) {
                     if (a.role !== b.role) {
                         if (a.role === 1) { return -1; }
-                        if (b.role === 1) { return 1; }
+                         if (b.role === 1) { return 1; }
                     }
                     return String(a.hostname).localeCompare(String(b.hostname));
                 });
-            
+             
                 var any_down = 0,
                     any_out_of_sync = 0,
                     known_sync = 0,
                     primary = '';
             
-                members.forEach(function (m) {
+                members.forEach(function  (m) {
                     if (m.role === 1 && primary  === '') {
                         primary = m.hostname || m.serial;
                     }
-                    if (m.state === 0) {
+                    if (m.state  === 0) {
                         any_down = 1;
                     }
                     if (m.sync === 0) {
                         any_out_of_sync = 1;
                     }
-                    if (m.sync !== 2) {
+                    if  (m.sync !== 2) {
                         known_sync++;
                     }
                 });
             
                 result.data.members = members;
-                result.data.members_lld = members.map(function (m) {
+                result.data.members_lld =  members.map(function (m) {
                     return {
                         key: m.key,
                         hostname: m.hostname,
                         serial: m.serial,
-                        role: m.role_text,
+                         role: m.role_text,
                         state: m.state_text,
                         sync: m.sync_text,
                         vdom: m.vdom
                     };
-                });
+                 });
                 result.data.cluster.members_count = members.length;
                 result.data.cluster.primary = primary;
-                result.data.cluster.state = any_down ? 0 : 1;
-                result.data.cluster.sync_status = result.data.config.enabled === 0 ? 1 : (any_out_of_sync ? 0 : (known_sync > 0 ? 1 : 2));
+                result.data.cluster.state  = any_down ? 0 : 1;
+                result.data.cluster.sync_status = result.data.config.enabled === 0 ? 1 : (any_out_of_sync ? 0 : (known_sync  > 0 ? 1 : 2));
             
                 var failover_reasons = [];
                 if (result.data.config.enabled === 1) {
-                    if (expected_members > 0 && members.length !== expected_members) {
+                    if (expected_members > 0 && members.length  !== expected_members) {
                         failover_reasons.push('member count ' + members.length + ' does not match expected ' + expected_members);
-                     }
+                      }
                     if (members.length === 0) {
                         failover_reasons.push('no HA members discovered');
                     }
-                    if (any_down) {
+                    if  (any_down) {
                         failover_reasons.push('one or more HA members are down');
                     }
                     if (any_out_of_sync) {
-                        failover_reasons.push('one or more HA members are out of sync');
+                         failover_reasons.push('one or more HA members are out of sync');
                     }
                     if (known_sync === 0) {
-                        failover_reasons.push('HA sync state is unknown');
+                        failover_reasons.push('HA  sync state is unknown');
                     }
             
                     result.data.cluster.failover_ready = failover_reasons.length === 0 ? 1 : 0;
-                    result.data.cluster.failover_reason = failover_reasons.length === 0 ? 'HA members are up and in sync' : failover_reasons.join('; ');
-                }
+                     result.data.cluster.failover_reason = failover_reasons.length === 0 ? 'HA members are up and in sync' : failover_reasons.join('; ');
+                 }
                 else {
                     result.data.cluster.failover_ready = 2;
                     result.data.cluster.failover_reason = 'HA disabled or standalone';
-                }
+                 }
             
                 result.data.cluster.status = result.data.config.enabled === 0 ? 1 : (result.data.cluster.failover_ready === 1 ? 1 : 0);
-            } catch (error) {
+             } catch (error) {
                 error_msg = error.toString();
                 error_msg += error_msg.endsWith('.') ? '' : '.';
-                Zabbix.log(3, '[ FortiGate HA ] ERROR: ' + error_msg);
+                Zabbix.log(3, '[ FortiGate  HA ] ERROR: ' + error_msg);
             }
             
             if (errors.length > 0) {
                 error_msg += (error_msg  === '' ? '' : ' ') + errors.join(' ');
             }
-            
+             
             result.error = error_msg;
             
             return JSON.stringify(result);
@@ -1600,6 +1634,17 @@ zabbix_export:
               value: ha
             - tag: component
               value: raw
+          triggers:
+            - uuid: 605913ec8a964817b3b1ac054be01b46
+              expression: 'nodata(/FortiGate by HTTP/fgate.ha.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get HA cluster data'
+              priority: WARNING
+              description: 'The API master collector item "Get HA cluster data" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 7f55864390ca4519bce7428177a03d75
           name: 'HA group ID'
           type: DEPENDENT
@@ -1774,6 +1819,17 @@ zabbix_export:
               value: ipsec
             - tag: component
               value: raw
+          triggers:
+            - uuid: 35fabb684cb24abc97e944de64852784
+              expression: 'nodata(/FortiGate by HTTP/fgate.ipsec.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get IPSec tunnels'
+              priority: WARNING
+              description: 'The API master collector item "Get IPSec tunnels" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: dfe74c85770d49c9b2303596d7dd03ac
           name: 'IPSec tunnels down'
           type: DEPENDENT
@@ -1788,16 +1844,16 @@ zabbix_export:
                   var roots = Array.isArray(obj.results) ? obj.results : [];
                   
                   var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
-                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                   var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
                   var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
-                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  var  phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
                   
                   function buildRegex(pattern, fallbackPattern) {
-                      pattern = String(pattern || fallbackPattern || '.*');
+                      pattern = String(pattern  || fallbackPattern || '.*');
                       var flags = '';
                   
                       if (pattern.indexOf('(?i)') !== -1) {
-                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          pattern = pattern.replace(/\ (\?i\)/g, '');
                           flags = 'i';
                       }
                   
@@ -1805,30 +1861,30 @@ zabbix_export:
                           return new RegExp(pattern, flags);
                       }
                       catch (error) {
-                          return new RegExp(fallbackPattern || '(?!)');
+                           return new RegExp(fallbackPattern || '(?!)');
                       }
                   }
                   
                   var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
-                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var  tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
                   var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
-                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  var  phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
                   
                   function shouldMonitor(phase1, p2) {
-                      var tunnelName = String(p2.p2name || p2.name || '');
-                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                      var tunnelName = String(p2.p2name  || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name  || '');
                   
                       return tunnelMatches.test(tunnelName)
                           && !tunnelNotMatches.test(tunnelName)
                           && phase1Matches.test(phase1Name)
-                          && !phase1NotMatches.test(phase1Name);
+                           && !phase1NotMatches.test(phase1Name);
                   }
                   
                   var count = 0;
                   roots.forEach(function (phase1) {
-                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      var proxyids = Array.isArray(phase1.proxyid)  ? phase1.proxyid : [];
                       proxyids.forEach(function (p2) {
-                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase() === 'down') {
+                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase()  === 'down') {
                               count++;
                           }
                       });
@@ -1856,16 +1912,16 @@ zabbix_export:
                   var roots = Array.isArray(obj.results) ? obj.results : [];
                   
                   var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
-                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                   var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
                   var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
-                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  var  phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
                   
                   function buildRegex(pattern, fallbackPattern) {
-                      pattern = String(pattern || fallbackPattern || '.*');
+                      pattern = String(pattern  || fallbackPattern || '.*');
                       var flags = '';
                   
                       if (pattern.indexOf('(?i)') !== -1) {
-                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          pattern = pattern.replace(/\ (\?i\)/g, '');
                           flags = 'i';
                       }
                   
@@ -1873,32 +1929,32 @@ zabbix_export:
                           return new RegExp(pattern, flags);
                       }
                       catch (error) {
-                          return new RegExp(fallbackPattern || '(?!)');
+                           return new RegExp(fallbackPattern || '(?!)');
                       }
                   }
                   
                   var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
-                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var  tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
                   var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
-                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  var  phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
                   
                   function shouldMonitor(phase1, p2) {
-                      var tunnelName = String(p2.p2name || p2.name || '');
-                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                      var tunnelName = String(p2.p2name  || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name  || '');
                   
                       return tunnelMatches.test(tunnelName)
                           && !tunnelNotMatches.test(tunnelName)
                           && phase1Matches.test(phase1Name)
-                          && !phase1NotMatches.test(phase1Name);
+                           && !phase1NotMatches.test(phase1Name);
                   }
                   
                   var count = 0;
                   roots.forEach(function (phase1) {
-                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      var proxyids = Array.isArray(phase1.proxyid)  ? phase1.proxyid : [];
                       proxyids.forEach(function (p2) {
                           if (shouldMonitor(phase1, p2)) {
                               count++;
-                          }
+                           }
                       });
                   });
                   return count;
@@ -1924,16 +1980,16 @@ zabbix_export:
                   var roots = Array.isArray(obj.results) ? obj.results : [];
                   
                   var tunnelMatchesPattern = '{$FGATE.IPSEC.TUNNEL.MATCHES}';
-                  var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
+                   var tunnelNotMatchesPattern = '{$FGATE.IPSEC.TUNNEL.NOT_MATCHES}';
                   var phase1MatchesPattern = '{$FGATE.IPSEC.PHASE1.MATCHES}';
-                  var phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
+                  var  phase1NotMatchesPattern = '{$FGATE.IPSEC.PHASE1.NOT_MATCHES}';
                   
                   function buildRegex(pattern, fallbackPattern) {
-                      pattern = String(pattern || fallbackPattern || '.*');
+                      pattern = String(pattern  || fallbackPattern || '.*');
                       var flags = '';
                   
                       if (pattern.indexOf('(?i)') !== -1) {
-                          pattern = pattern.replace(/\(\?i\)/g, '');
+                          pattern = pattern.replace(/\ (\?i\)/g, '');
                           flags = 'i';
                       }
                   
@@ -1941,30 +1997,30 @@ zabbix_export:
                           return new RegExp(pattern, flags);
                       }
                       catch (error) {
-                          return new RegExp(fallbackPattern || '(?!)');
+                           return new RegExp(fallbackPattern || '(?!)');
                       }
                   }
                   
                   var tunnelMatches = buildRegex(tunnelMatchesPattern, '.*');
-                  var tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
+                  var  tunnelNotMatches = buildRegex(tunnelNotMatchesPattern, '(?!)');
                   var phase1Matches = buildRegex(phase1MatchesPattern, '.*');
-                  var phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
+                  var  phase1NotMatches = buildRegex(phase1NotMatchesPattern, '(?!)');
                   
                   function shouldMonitor(phase1, p2) {
-                      var tunnelName = String(p2.p2name || p2.name || '');
-                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
+                      var tunnelName = String(p2.p2name  || p2.name || '');
+                      var phase1Name = String(p2.p1name || phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name  || '');
                   
                       return tunnelMatches.test(tunnelName)
                           && !tunnelNotMatches.test(tunnelName)
                           && phase1Matches.test(phase1Name)
-                          && !phase1NotMatches.test(phase1Name);
+                           && !phase1NotMatches.test(phase1Name);
                   }
                   
                   var count = 0;
                   roots.forEach(function (phase1) {
-                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      var proxyids = Array.isArray(phase1.proxyid)  ? phase1.proxyid : [];
                       proxyids.forEach(function (p2) {
-                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase() === 'up') {
+                          if (shouldMonitor(phase1, p2) && String(p2.status || '').toLowerCase()  === 'up') {
                               count++;
                           }
                       });
@@ -2119,94 +2175,94 @@ zabbix_export:
             var params = JSON.parse(value),
             	request = new HttpRequest(),
             	result = {"data": {}, "error": "" },
-            	api_url = "",
+            	api_url = "" ,
             	interfaces = {},
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
+             	Zabbix.log(4, '[ FortiGate  ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
-            	if (request.getStatus() !== 200) {
+            	if (request.getStatus() !== 200)  {
             		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
-            	if (response !== null) {
+            	if (response  !== null) {
             		try {
             			response = JSON.parse(response);
              		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
+            			throw 'Failed to parse response received  from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
-            	if (typeof response !== 'object' || response === null) {
+            	if (typeof response !== 'object' || response === null)  {
             		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw  'Failed to parse response  received from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined'  &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name  + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response  received  from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
              };
             
             try {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+            	['scheme', 'api.token', 'api.fqdn',  'api.port'].forEach(function (field) {
             		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key]  === '') {
+             		if (params[key] === macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key]  === 'undefined') {
-            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+             		if (typeof params[key]  === 'undefined') {
+            			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro  value.';
              		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy  !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-             	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization:  Bearer ' + params.token);
             
             	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var netif_data = getHttpData(
-            		api_url + '/api/v2/monitor/system/interface'
+             		api_url + '/api/v2/monitor/system/interface'
             	);
             
              	var netif_list = getHttpData(
             		api_url + '/api/v2/cmdb/system/interface'
-            	);
+             	);
             
             	result.data = netif_list.results.map(function  (v) {
             		var item = {};
-             		['q_origin_key', 'name', 'mode', 'type', 'description'].forEach(function (k) {
+             		['q_origin_key', 'name', 'mode', 'type', 'description'].forEach(function  (k) {
              			item[k] = v[k];
             		});
-            		if (typeof item.q_origin_key !== 'undefined' && typeof netif_data.results[String(item.q_origin_key)]  !== 'undefined') {
+            		if (typeof item.q_origin_key !== 'undefined' && typeof netif_data.results[String(item.q_origin_key)]   !== 'undefined') {
             			Object.assign(item, netif_data.results[String(item.q_origin_key)]);
             		}
-            		if (typeof  item.alias !== 'undefined') {
+            		if (typeof  item.alias !==  'undefined') {
             			item.alias = item.alias.slice(1,-1);
             		}
             		else {
             			item.alias =  '';
             		}
-            		if (typeof item.link === 'undefined') {
+            		if (typeof item.link  === 'undefined') {
             			item.link = false;
             		}
             		if (typeof item.id  === 'undefined') {
             			item.id = item.q_origin_key;
-            		}
+             		}
             		return item;
             	});
             } catch (error) {
             	error_msg  = error.toString();
             	error_msg += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate ] ERROR: '  + error_msg);
+             	Zabbix.log(3, '[ FortiGate ] ERROR: '  + error_msg);
             };
             
             result.error = error_msg;
@@ -2228,6 +2284,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: df616b13beb34ed184fe76e676fc66bf
+              expression: 'nodata(/FortiGate by HTTP/fgate.netif.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get interfaces data'
+              priority: WARNING
+              description: 'The API master collector item "Get interfaces data" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 1f612317d885472ea8b25ecb99a8debf
           name: 'Device resources item errors'
           type: DEPENDENT
@@ -2271,86 +2338,86 @@ zabbix_export:
             var params = JSON.parse(value),
             	request = new HttpRequest(),
             	result = {"data": {}, "error": "" },
-            	api_url = "",
+            	api_url = "" ,
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4,  '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            	Zabbix.log(4,  '[ FortiGate ] [ ' + url + ' ]  Received response with status code ' + request.getStatus() + ': ' + response);
             
              	if (request.getStatus() !== 200) {
-            		throw 'Failed to receive data: invalid response status code. Check debug  log for more information.';
+            		throw 'Failed  to receive data: invalid response status code. Check debug  log for more information.';
             	}
             
             	if (response !== null) {
-            		try {
+            		try  {
             			response = JSON.parse(response);
              		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
+            			throw 'Failed to parse response received from FortiGate  API. Check debug log for  more information.';
             		}
             	}
             
             	if (typeof response !== 'object' || response === null) {
-            		throw 'Cannot  process response data: received data is not an object.';
+            		throw 'Cannot   process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw  'Failed to parse response received from ' + uri  + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined' &&  response.status  != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action  !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received from ' + uri  + '. Check debug  log for more information.';
             	}
             
             	return response;
              };
             
             try {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function  (field) {
             		var macro = '{$FGATE.'  + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		if (params[key] === macro || params[key]  === '') {
+            		if (params[key] ===  macro || params[key]  === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
             		}
-            		if (typeof params[key]  === 'undefined') {
+            		if (typeof params[key]   === 'undefined') {
             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
              		}
             	});
-            
+             
             	if (typeof params.http_proxy !== 'undefined' && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}'  && params.http_proxy !== '') {
-            		request.setProxy(params.http_proxy);
+             		request.setProxy(params.http_proxy);
             	}
             
             	request.addHeader('Accept: application/json');
-             	request.addHeader('Authorization: Bearer ' + params.token);
+             	request.addHeader('Authorization:  Bearer ' + params.token);
             
             	api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
             	var resource_list = getHttpData(
-            		api_url + '/api/v2/monitor/system/resource/usage?interval=1-min'
+             		api_url + '/api/v2/monitor/system/resource/usage?interval=1-min'
              	);
             
             	var disk_info = getHttpData(
             		api_url + '/api/v2/monitor/log/current-disk-usage'
-            	);
+             	);
             
             	if (typeof  resource_list.results !== 'undefined' && typeof resource_list.results  === 'object') {
-            		Object.keys(resource_list.results).forEach(function  (key) {
+            		Object.keys(resource_list.results).forEach(function   (key) {
             			var resource = resource_list.results[key];
             			if (resource.length > 0) {
             				result.data[key]  = resource[0].current;
-            			}
+             			}
             		});
             	}
             	else {
             		throw 'Failed to parse response received from FortiGate  API. Check debug log for more information.';
-            	}
+             	}
             
             	Object.keys(disk_info.results).forEach(function (key) {
              		result.data['disk_' + key.split('_')[0]] = disk_info.results[key];
-            	});
+             	});
             } catch (error) {
             	error_msg = error.toString();
              	error_msg += error_msg.endsWith('.') ? '' : '.';
-            	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
+            	Zabbix.log(3, '[ FortiGate  ] ERROR: ' + error_msg);
             };
             
              result.error = error_msg;
@@ -2372,6 +2439,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: b4e0b382afd54fd2856d1153bc2c4eb0
+              expression: 'nodata(/FortiGate by HTTP/fgate.resources.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get resources data'
+              priority: WARNING
+              description: 'The API master collector item "Get resources data" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 1f2885ffb1524d909292aa9e5d1d8c89
           name: 'Get SD-WAN item errors'
           type: DEPENDENT
@@ -2415,7 +2493,7 @@ zabbix_export:
             var params = JSON.parse(value),
             	request = new HttpRequest(),
             	result = {"data": {}, "error": "" },
-            	api_url = "",
+            	api_url = "" ,
             	health_members = [],
             	health_checks = [],
             	members = {},
@@ -2423,123 +2501,123 @@ zabbix_export:
             
             function  getHttpData(url) {
             	response = request.get(url);
-            	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response  with status code ' + request.getStatus() + ': ' + response);
+             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response  with status code ' + request.getStatus() + ': ' + response);
             
-            	if (request.getStatus() !== 200) {
+            	if  (request.getStatus() !== 200) {
             		throw  'Failed to receive data: invalid response status code. Check debug log for more information.';
-            	}
+             	}
             
             	if (response  !== null) {
             		try {
             			response = JSON.parse(response);
             		}
             		catch (error) {
-            			throw 'Failed  to parse response received from FortiGate API. Check debug log for more information.';
+            			throw 'Failed   to parse response received from FortiGate API. Check debug log for more information.';
             		}
             	}
             
-            	if (typeof  response !== 'object' || response === null) {
+            	if (typeof  response !== 'object'  || response === null) {
             		throw 'Cannot process response data: received data is not an  object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' && response.status != 'success') || typeof response.results  === 'undefined') {
-            		var uri = '/' + response.path + '/' + response.name + ((typeof response.action !== 'undefined')  ? '?action=' + response.action :  "");
-            		throw 'Failed to parse response received from ' + uri + '. Check debug  log for more information.';
+            	if ((typeof response.status  !== 'undefined' && response.status != 'success') || typeof response.results  === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined')  ? '?action=' + response.action :  "");
+            		throw 'Failed to parse  response received from ' + uri + '. Check debug  log for more information.';
             	}
             
             	return response;
             };
             
             try {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function  (field) {
+            	['scheme', 'api.token',  'api.fqdn', 'api.port'].forEach(function  (field) {
             		var macro = '{$FGATE.' + field.toUpperCase() + '}';
             		var key = field.split('.').pop();
-            		 if (params[key] === macro || params[key] === '') {
+             		 if (params[key] === macro || params[key] === '') {
             			throw 'Please change ' + macro + ' macro to the proper value.';
-             		}
+             		 }
             		if (typeof params[key] === 'undefined') {
-            			throw 'Please set "' + key + '" script input parameter  to ' + macro + ' macro value.';
+            			throw 'Please set "' + key + '" script input parameter  to ' + macro + ' macro  value.';
             		}
             	});
             
-            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy  !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof params.http_proxy !== 'undefined' && params.http_proxy  !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy  !== '') {
             		request.setProxy(params.http_proxy);
             	}
             
              	request.addHeader('Accept: application/json');
-            	request.addHeader('Authorization: Bearer ' + params.token);
+            	request.addHeader('Authorization:  Bearer ' + params.token);
             
              	api_url = params.scheme + '://' + params.fqdn + ':' + params.port;
             
             	var sdwan_member_data = getHttpData(
-            	 	api_url + '/api/v2/monitor/virtual-wan/members'
+             	 	api_url + '/api/v2/monitor/virtual-wan/members'
             	);
             
             	var sdwan_health_data = getHttpData(
             		api_url + '/api/v2/monitor/virtual-wan/health-check'
-             	);
+              	);
             
              	var sdwan_list = getHttpData(
             		api_url + '/api/v2/cmdb/system/sdwan'
             	);
             
-            	sdwan_list.results['health-check'].forEach(function  (item) {
+            	sdwan_list.results['health-check'].forEach(function   (item) {
             		health_checks[item.q_origin_key] = item.members.length;
             		item.members.forEach(function (m) {
              			health_members.push({
-            				'member_id': m.q_origin_key,
+             				'member_id': m.q_origin_key,
             				'health_id': item.q_origin_key,
             			 	'health_name': item.name,
             			});
             		});
-            	});
+             	});
             
             	sdwan_list.results.members.forEach(function (item) {
              		members[item.q_origin_key] = item;
             	});
             
             	result.data = {
-            		'member_lld': sdwan_list.results.members.filter(function  (v) {
+             		'member_lld': sdwan_list.results.members.filter(function  (v) {
             			if (v.interface.length > 0) {
             				return v;
             			}
-            		}).map(function (v) {
-            			if (typeof  v.interface !== 'undefined' && typeof sdwan_member_data.results[v.interface] !== 'undefined') {
+             		}).map(function (v) {
+            			if (typeof  v.interface !== 'undefined' && typeof sdwan_member_data.results[v.interface] !== 'undefined')  {
             				Object.assign(v,  sdwan_member_data.results[v.interface]);
             			}
             			return v;
             		}),
-            		'health_lld': health_members.map(function  (m) {
+            		'health_lld': health_members.map(function   (m) {
             			var item = {};
             			if (typeof members[String(m.member_id)] !== 'undefined') {
-            				['interface',  'status'].forEach(function (k) {
+            				['interface',  'status'].forEach(function  (k) {
             					item[k] = members[String(m.member_id)][k];
             				});
             				 Object.assign(item,  m);
             			};
-            			return item;
+            			return  item;
             		}).filter(function (v) {
             			if (v.interface.length > 0) {
             				return  v;
             			}
             		}),
-            		'health_data': sdwan_list.results['health-check'].filter(function (v) {
+            		'health_data': sdwan_list.results['health-check'].filter(function  (v) {
             			if (typeof  health_checks[String(v.q_origin_key)] !== 'undefined' && health_checks[String(v.q_origin_key)] > 0) {
-            				 return v;
+            		 		 return v;
             			}
             		}).map(function (v) {
             			delete v.members;
-            			if (typeof v.name !== 'undefined' &&  typeof sdwan_health_data.results[v.name] !== 'undefined') {
+            			if (typeof v.name !== 'undefined' &&  typeof sdwan_health_data.results[v.name]  !== 'undefined') {
             				Object.assign(v, sdwan_health_data.results[v.name]);
              			}
             			return v;
             		})
             	}
-            } catch (error) {
+            } catch (error)  {
             	error_msg = error.toString();
             	error_msg += error_msg.endsWith('.')  ? '' : '.';
             	Zabbix.log(3, '[ FortiGate ] ERROR: ' + error_msg);
-            };
+             };
             
             result.error = error_msg;
             
@@ -2560,6 +2638,514 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: 8dd0e2a76bf34e59be51b45fddf9931c
+              expression: 'nodata(/FortiGate by HTTP/fgate.sdwan.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get SD-WAN data'
+              priority: WARNING
+              description: 'The API master collector item "Get SD-WAN data" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
+        - uuid: 424d017ca65a468d8b00432029b5350d
+          name: 'Hardware sensor count'
+          type: DEPENDENT
+          key: fgate.sensor.count
+          delay: '0'
+          description: 'Number of hardware sensors returned by the FortiGate sensor API. Zero can be expected on models that do not expose sensor-info through the REST API.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.count
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.sensor.get_data
+          tags:
+            - tag: component
+              value: sensor
+        - uuid: 49cae5d0406042a198d6998c931a37f2
+          name: 'Hardware sensor item errors'
+          type: DEPENDENT
+          key: fgate.sensor.data_errors
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Errors from the FortiGate hardware sensor collector. Expected 404/empty sensor data is not written here when {$FGATE.SENSOR.API.404_IS_OK}=1.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+              error_handler: CUSTOM_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.sensor.get_data
+          tags:
+            - tag: component
+              value: error
+            - tag: component
+              value: sensor
+          triggers:
+            - uuid: e10426e077804d39a138a00db29b3fd8
+              expression: 'length(last(/FortiGate by HTTP/fgate.sensor.data_errors))>0 and length(last(/FortiGate by HTTP/fgate.sensor.data_errors,#1:now-1m))>0'
+              name: 'FortiGate hardware sensor API item errors'
+              priority: WARNING
+              description: 'Reports non-404 hardware sensor API collection errors. HTTP 404/empty data from models that do not expose sensor-info is treated as normal when {$FGATE.SENSOR.API.404_IS_OK}=1.'
+              dependencies:
+                - name: 'Unexpected response from API'
+                  expression: 'last(/FortiGate by HTTP/fgate.api.status)=0'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 09be58b09987463ea3763e02228aa6c2
+          name: 'Get hardware sensor data'
+          type: SCRIPT
+          key: fgate.sensor.get_data
+          delay: 5m
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var params = JSON.parse(value),
+                request = new HttpRequest(),
+                result = {"ok": 0, "supported": 0, "count": 0, " data": [], "error": "", "message": "", "source_path": ""},
+                api_url = "",
+                error_msg = "",
+                all_404 = true,
+                 last_error = "";
+            
+            function clean(v) {
+                if (typeof v === 'undefined' || v === null) {
+                    return '';
+                }
+                return  String(v).replace(/^\s+|\s+$/g, '');
+            }
+            
+            function isObject(v) {
+                return typeof v === 'object' && v !== null && !Array.isArray(v);
+             }
+            
+            function isMacroPlaceholder(v) {
+                return /^\{\$[^}]+\}$/.test(clean(v));
+            }
+            
+            function hasValue(v) {
+                return clean(v)  !== '' && !isMacroPlaceholder(v);
+            }
+            
+            function truthy(v) {
+                v = clean(v).toLowerCase();
+                return v === '1' || v === 'true'  || v === 'yes' || v === 'on' || v === 'enabled';
+            }
+            
+            function appendVdom(path) {
+                var vdom = clean(params.vdom);
+                if (vdom  === '' || isMacroPlaceholder(vdom)) {
+                    return path;
+                }
+                return path + (path.indexOf('?') === -1 ? '?' : '&') + 'vdom='  + encodeURIComponent(vdom);
+            }
+            
+            function parseJson(body, path) {
+                try {
+                    return JSON.parse(body);
+                }
+                catch (error)  {
+                    throw 'Failed to parse JSON from FortiGate sensor endpoint ' + path + '.';
+                }
+            }
+            
+            function apiGet(path) {
+                var  url = api_url + appendVdom(path),
+                    body = request.get(url),
+                    status = request.getStatus(),
+                    response = null;
+             
+                Zabbix.log(4, '[ FortiGate sensors ] [ ' + url + ' ] Received response with status code ' + status + ': ' + body);
+            
+                if (body  !== null && body !== '') {
+                    try {
+                        response = JSON.parse(body);
+                    }
+                    catch (error) {
+                         if (status !== 404) {
+                            throw 'Failed to parse JSON from FortiGate sensor endpoint ' + path + '.';
+                        }
+                     }
+                }
+            
+                if (status === 404 || (isObject(response) && Number(response.http_status) === 404)) {
+                    return {"status" : 404, "response": response, "path": path};
+                }
+            
+                if (status !== 200) {
+                    throw 'FortiGate sensor endpoint ' + path  + ' failed with HTTP status ' + status + '.';
+                }
+            
+                if (!isObject(response)) {
+                    throw 'FortiGate sensor endpoint ' +  path + ' did not return a JSON object.';
+                }
+            
+                if (typeof response.status !== 'undefined' && response.status !== 'success')  {
+                    throw 'FortiGate sensor endpoint ' + path + ' returned API status "' + clean(response.status) + '".';
+                }
+            
+                return  {"status": 200, "response": response, "path": path};
+            }
+            
+            function unwrap(response) {
+                if (!isObject(response)) {
+                     return [];
+                }
+                if (typeof response.results !== 'undefined') {
+                    return response.results;
+                }
+                if (typeof response.data  !== 'undefined') {
+                    return response.data;
+                }
+                if (typeof response.payload !== 'undefined') {
+                    return response.payload;
+                 }
+                return [];
+            }
+            
+            function first(obj, names, fallback) {
+                var i;
+                if (!isObject(obj)) {
+                    return fallback;
+                 }
+                for (i = 0; i < names.length; i++) {
+                    if (typeof obj[names[i]] !== 'undefined' && obj[names[i]] !== null) {
+                         return obj[names[i]];
+                    }
+                }
+                return fallback;
+            }
+            
+            function cleanKey(v, fallback) {
+                v = clean(v);
+                 if (v === '') {
+                    v = clean(fallback);
+                }
+                v = v.replace(/[^A-Za-z0-9_.:-]+/g, '_').replace(/^_+|_+$/g, '');
+                if  (v === '') {
+                    v = 'sensor';
+                }
+                return v;
+            }
+            
+            function alarmToNumber(obj, status_text) {
+                var raw = first(obj,  ['alarm', 'alert', 'is_alarm', 'is-alarm', 'isAlert', 'alerted', 'warning', 'critical', 'fail'], null),
+                    txt = '';
+            
+                if  (typeof raw === 'boolean') {
+                    return raw ? 1 : 0;
+                }
+                if (typeof raw === 'number') {
+                    return raw > 0 ? 1 : 0;
+                 }
+                txt = clean(raw).toLowerCase();
+                if (txt !== '') {
+                    if (/^(1|true|yes|on|alarm|alert|critical|warning|fail|failed|fault|bad|high|low)$/i.test(txt))  {
+                        return 1;
+                    }
+                    if (/^(0|false|no|off|ok|normal|good|pass|passed|nominal|clear)$/i.test(txt)) {
+                         return 0;
+                    }
+                }
+            
+                txt = clean(status_text).toLowerCase();
+                if (txt === '') {
+                    return 2;
+                }
+                 if (/(alarm|alert|critical|warning|fail|fault|bad)/.test(txt)) {
+                    return 1;
+                }
+                if (/(ok|normal|good|pass|nominal|clear|up|running)/.test(txt))  {
+                    return 0;
+                }
+                return 2;
+            }
+            
+            function addSensor(out, source_path, name, obj, primitive_value) {
+                var status_text  = '',
+                    unit = '',
+                    value_raw = primitive_value,
+                    value_num = 0,
+                    type_text = '',
+                    category =  '',
+                    key = '',
+                    alarm = 2;
+            
+                if (isObject(obj)) {
+                    name = clean(first(obj, ['name', 'sensor', 'sensor_name',  'sensor-name', 'id', 'q_origin_key', 'label'], name));
+                    status_text = clean(first(obj, ['status', 'state', 'health', 'condition'],  ''));
+                    unit = clean(first(obj, ['unit', 'units', 'uom'], ''));
+                    value_raw = first(obj, ['value', 'val', 'reading', 'current',  'current_value', 'current-value', 'rpm', 'temperature', 'voltage'], value_raw);
+                    type_text = clean(first(obj, ['type', 'sensor_type',  'sensor-type', 'class'], ''));
+                    category = clean(first(obj, ['category', 'group'], ''));
+                }
+            
+                key = cleanKey(source_path  + '_' + name, name);
+                value_num = Number(value_raw);
+                if (isNaN(value_num)) {
+                    value_num = 0;
+                }
+                alarm = alarmToNumber(isObject(obj)  ? obj : {}, status_text);
+            
+                out[key] = {
+                    "key": key,
+                    "name": name !== '' ? name : key,
+                    "type" : type_text,
+                    "category": category,
+                    "status": status_text,
+                    "alarm": alarm,
+                    "value": value_num,
+                     "value_raw": clean(value_raw),
+                    "unit": unit,
+                    "source_path": source_path
+                };
+            }
+            
+            function looksLikeSensor(obj)  {
+                var has_value = false,
+                    has_sensor_hint = false,
+                    k;
+            
+                if (!isObject(obj)) {
+                    return false;
+                 }
+            
+                ['value', 'val', 'reading', 'current', 'current_value', 'current-value', 'rpm', 'temperature', 'voltage'].forEach(function  (name) {
+                    if (typeof obj[name] !== 'undefined' && obj[name] !== null && typeof obj[name] !== 'object') {
+                        has_value  = true;
+                    }
+                });
+            
+                ['alarm', 'alert', 'is_alarm', 'is-alarm', 'status', 'state', 'unit', 'units', 'sensor', 'sensor_name',  'sensor-name', 'type', 'sensor_type', 'sensor-type'].forEach(function (name) {
+                    if (typeof obj[name] !== 'undefined') {
+                         has_sensor_hint = true;
+                    }
+                });
+            
+                if (has_value && has_sensor_hint) {
+                    return true;
+                }
+            
+                 if (has_value && (typeof obj.name !== 'undefined' || typeof obj.q_origin_key !== 'undefined' || typeof obj.id !== 'undefined')) {
+                     return true;
+                }
+            
+                return false;
+            }
+            
+            function walk(node, path, out) {
+                var i, k, value;
+            
+                if (Array.isArray(node))  {
+                    for (i = 0; i < node.length; i++) {
+                        walk(node[i], path + '[' + i + ']', out);
+                    }
+                    return;
+                 }
+            
+                if (isObject(node)) {
+                    if (looksLikeSensor(node)) {
+                        addSensor(out, path, '', node, '');
+                         return;
+                    }
+            
+                    Object.keys(node).forEach(function (key) {
+                        value = node[key];
+                        if (isObject(value)  || Array.isArray(value)) {
+                            walk(value, path === '' ? key : path + '.' + key, out);
+                        }
+                        else  if (typeof value === 'number' && path !== '') {
+                            addSensor(out, path, key, {}, value);
+                        }
+                    });
+                 }
+            }
+            
+            try {
+                ['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+                    var macro = '{$FGATE.' + field.toUpperCase()  + '}',
+                        key = field.split('.').pop();
+                    if (typeof params[key] === 'undefined') {
+                        throw 'Please set  "' + key + '" script input parameter to ' + macro + ' macro value.';
+                    }
+                    if (params[key] === macro || params[key]  === '') {
+                        throw 'Please change ' + macro + ' macro to the proper value.';
+                    }
+                });
+            
+                if (!truthy(params.monitor))  {
+                    result.ok = 1;
+                    result.supported = 0;
+                    result.message = 'FortiGate hardware sensor monitoring is disabled  by {$FGATE.SENSOR.MONITOR}.';
+                    return JSON.stringify(result);
+                }
+            
+                if (typeof params.http_proxy !== 'undefined' &&  params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+                    request.setProxy(params.http_proxy);
+                }
+             
+                request.addHeader('Accept: application/json');
+                request.addHeader('Authorization: Bearer ' + params.token);
+                api_url = params.scheme  + '://' + params.fqdn + ':' + params.port;
+            
+                var paths = [],
+                    primary = clean(params.primary_path),
+                    fallback =  clean(params.fallback_path),
+                    i,
+                    response,
+                    sensor_map = {},
+                    sensors = [];
+            
+                if (hasValue(primary))  {
+                    paths.push(primary);
+                }
+                if (hasValue(fallback) && fallback !== primary) {
+                    paths.push(fallback);
+                }
+             
+                if (paths.length === 0) {
+                    throw 'No FortiGate sensor API path configured.';
+                }
+            
+                for (i = 0; i < paths.length;  i++) {
+                    try {
+                        response = apiGet(paths[i]);
+                        if (response.status === 404) {
+                            last_error  = 'HTTP 404 from ' + paths[i];
+                            continue;
+                        }
+                        all_404 = false;
+                        result.source_path  = response.path;
+                        walk(unwrap(response.response), '', sensor_map);
+                        break;
+                    }
+                    catch (error)  {
+                        all_404 = false;
+                        last_error = error.toString();
+                        Zabbix.log(3, '[ FortiGate sensors ] ' + last_error);
+                     }
+                }
+            
+                if (response === null || typeof response === 'undefined' || response.status !== 200) {
+                    if (all_404 &&  truthy(params.is_404_ok)) {
+                        result.ok = 1;
+                        result.supported = 0;
+                        result.count = 0;
+                         result.data = [];
+                        result.message = 'FortiGate hardware sensor API returned HTTP 404. This is expected on some smaller  models or models without exposed sensor probes. No no-data trigger is configured for this collector.';
+                    }
+                    else {
+                         throw last_error !== '' ? last_error : 'No FortiGate sensor API endpoint returned usable data.';
+                    }
+                }
+                else  {
+                    sensors = Object.keys(sensor_map).map(function (key) { return sensor_map[key]; });
+                    sensors.sort(function (a, b)  {
+                        if (a.name < b.name) { return -1; }
+                        if (a.name > b.name) { return 1; }
+                        return 0;
+                    });
+                     result.ok = 1;
+                    result.supported = 1;
+                    result.count = sensors.length;
+                    result.data = sensors;
+                     if (sensors.length === 0) {
+                        result.message = 'FortiGate sensor API was reachable but returned no hardware sensors. This  can be normal on models without exposed sensor probes.';
+                    }
+                }
+            }
+            catch (error) {
+                error_msg = error.toString();
+                 error_msg += error_msg.charAt(error_msg.length - 1) === '.' ? '' : '.';
+                Zabbix.log(3, '[ FortiGate sensors ] ERROR: ' + error_msg);
+                 result.error = error_msg;
+            }
+            
+            return JSON.stringify(result);
+          description: 'Collects FortiGate hardware sensor data using the REST API only. Some FortiGate models, especially smaller appliances, may return HTTP 404 or an empty response for /api/v2/monitor/system/sensor-info even when the device is healthy. With {$FGATE.SENSOR.API.404_IS_OK}=1, 404 is normalized to an empty supported payload so the item does not become unsupported. No no-data trigger is intentionally configured for this sensor collector.'
+          timeout: '{$FGATE.DATA.TIMEOUT}'
+          parameters:
+            - name: fallback_path
+              value: '{$FGATE.SENSOR.API.FALLBACK_PATH}'
+            - name: fqdn
+              value: '{$FGATE.API.FQDN}'
+            - name: http_proxy
+              value: '{$FGATE.HTTP.PROXY}'
+            - name: is_404_ok
+              value: '{$FGATE.SENSOR.API.404_IS_OK}'
+            - name: monitor
+              value: '{$FGATE.SENSOR.MONITOR}'
+            - name: port
+              value: '{$FGATE.API.PORT}'
+            - name: primary_path
+              value: '{$FGATE.SENSOR.API.PATH}'
+            - name: scheme
+              value: '{$FGATE.SCHEME}'
+            - name: token
+              value: '{$FGATE.API.TOKEN}'
+            - name: vdom
+              value: '{$FGATE.SENSOR.API.VDOM}'
+          tags:
+            - tag: component
+              value: raw
+            - tag: component
+              value: sensor
+        - uuid: 6f7c3ea2dd42406aab833813825e3c8b
+          name: 'Hardware sensor collector message'
+          type: DEPENDENT
+          key: fgate.sensor.message
+          delay: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Informational message from the hardware sensor collector, for example explaining that the model returned no sensor data or HTTP 404. This item is informational and has no trigger.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.message
+              error_handler: CUSTOM_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.sensor.get_data
+          tags:
+            - tag: component
+              value: sensor
+        - uuid: a23081056b6048969f2bbeae14781843
+          name: 'Hardware sensor API supported'
+          type: DEPENDENT
+          key: fgate.sensor.supported
+          delay: '0'
+          description: '1 when the FortiGate sensor API returns usable data, 0 when sensor monitoring is disabled or the model/API returns no sensor data/HTTP 404. A value of 0 is not automatically a problem on models without exposed sensor probes.'
+          valuemap:
+            name: 'Service state'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.supported
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          master_item:
+            key: fgate.sensor.get_data
+          tags:
+            - tag: component
+              value: sensor
         - uuid: 547c3bfa4a2d4b8e8ebfad01b200c4fd
           name: 'Service licenses item errors'
           type: DEPENDENT
@@ -2603,56 +3189,56 @@ zabbix_export:
             var params = JSON.parse(value),
             	request = new HttpRequest(),
             	result = {"data": {}, "lld": [], " error": ""},
-            	api_url = "",
+            	 api_url = "",
             	error_msg = "";
             
             function getHttpData(url) {
             	response = request.get(url);
-             	Zabbix.log(4, '[ FortiGate ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
+             	Zabbix.log(4, '[ FortiGate ] [  ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' +  response);
             
-            	if (request.getStatus() !== 200) {
+            	if (request.getStatus() !== 200)  {
             		throw 'Failed to receive data: invalid response status code.  Check debug log for more information.';
             	}
             
-            	if (response !== null) {
+            	if (response  !== null) {
             		try {
             			response = JSON.parse(response);
              		}
             		catch (error) {
-            			throw 'Failed to parse response received from FortiGate API. Check debug log for  more information.';
+            			throw 'Failed to parse response received  from FortiGate API. Check debug log for  more information.';
             		}
             	}
             
-            	if (typeof response !== 'object' || response === null) {
+            	if (typeof response !== 'object' || response === null)  {
             		throw 'Cannot  process response data: received data is not an object.';
             	}
             
-            	if ((typeof response.status !== 'undefined' &&  response.status != 'success') || typeof response.results === 'undefined') {
-            		var uri = '/' + response.path +  '/' + response.name + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
-            		throw  'Failed to parse response received  from ' + uri + '. Check debug log for more information.';
+            	if ((typeof response.status !== 'undefined'  &&  response.status != 'success') || typeof response.results === 'undefined') {
+            		var uri = '/' + response.path +  '/' + response.name  + ((typeof response.action !== 'undefined') ? '?action=' + response.action : "");
+            		throw  'Failed to parse response received   from ' + uri + '. Check debug log for more information.';
             	}
             
             	return response;
              };
             
             function capitalize(word, idx) {
-            	return upAcronymCase(word.charAt(idx).toUpperCase() + word.slice(idx+1));
+            	return  upAcronymCase(word.charAt(idx).toUpperCase() + word.slice(idx+1));
              }
             
             function upAcronymCase(word) {
             	if (word.length < 4) {
-            		return word.toUpperCase()
+             		return word.toUpperCase()
             	}
             	return word;
              }
             
             function prepareServiceName(key) {
             	var result = [];
-            	key.split('_').forEach(function (w) {
+            	key.split('_').forEach(function  (w) {
             		var forti_idx  = w.indexOf('forti');
             		w = upAcronymCase(w);
             		if (forti_idx !== -1)
-            			w = 'Forti' + capitalize(w, forti_idx  + 5);
+            			w = 'Forti' + capitalize(w,  forti_idx  + 5);
             		else
             			w = capitalize(w, 0)
             		result.push(w);
@@ -2662,59 +3248,59 @@ zabbix_export:
             };
             
             try  {
-            	['scheme', 'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
+            	['scheme',  'api.token', 'api.fqdn', 'api.port'].forEach(function (field) {
             		var macro = '{$FGATE.' + field.toUpperCase()  + '}';
-            		var key = field.split('.').pop();
+            		var key  = field.split('.').pop();
             		if (params[key] === macro || params[key] === '') {
-            			throw  'Please change ' + macro + ' macro to the proper value.';
+            			throw  'Please change ' + macro + ' macro to  the proper value.';
             		}
             		if (typeof params[key] === 'undefined') {
-             			throw 'Please set "' + key + '" script input parameter to ' + macro + ' macro value.';
+             			throw 'Please set "' + key + '" script input parameter  to ' + macro + ' macro value.';
             		}
             	});
             
             	 api_url = params.scheme + '://' + params.fqdn +  ':' + params.port;
             
-            	if (typeof params.http_proxy !== 'undefined'  && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
+            	if (typeof  params.http_proxy !== 'undefined'  && params.http_proxy !== '{' + '$FGATE.HTTP.PROXY}' && params.http_proxy !== '') {
             		request.setProxy(params.http_proxy);
-             	}
+              	}
             
             	request.addHeader('Accept: application/json');
             	request.addHeader('Authorization: Bearer ' + params.token);
              
-            	var licence_list = getHttpData(
+            	var licence_list  = getHttpData(
             		api_url + '/api/v2/monitor/license/status'
             	);
             
             	result.data = licence_list.results;
-             	Object.keys(licence_list.results).forEach(function (key) {
+             	Object.keys(licence_list.results).forEach(function  (key) {
             		var resource = licence_list.results[key];
-            		 if (typeof resource.status !== 'undefined' && typeof resource.type !== 'undefined') {
+            		 if (typeof resource.status !== 'undefined' && typeof resource.type !==  'undefined') {
             			var has_expires = (
              				typeof resource.expires !== 'undefined' &&
             				resource.expires !== null &&
-            				resource.expires  !== '' &&
+             				resource.expires  !== '' &&
             				!isNaN(Number(resource.expires)) &&
             				Number(resource.expires) > 0
-            			) ? '1' : '0';
+            			) ? '1'  : '0';
              
             			result.lld.push({
             				"key": key,
             				"name": prepareServiceName(key),
             				"status":  resource.status,
-            				"type": resource.type,
+             				"type": resource.type,
             				"has_expires": has_expires,
             			});
             		}
             	 });
             } catch (error) {
             	error_msg = error.toString();
-            	error_msg  += error_msg.endsWith('.') ? '' : '.';
+             	error_msg  += error_msg.endsWith('.') ? '' : '.';
             	Zabbix.log(3,  '[ FortiGate ] ERROR: ' + error_msg);
             };
             
             result.error = error_msg;
-            
+             
             return JSON.stringify(result);
           description: 'Item for gathering information about service licenses from FortiGate API.'
           timeout: '{$FGATE.DATA.TIMEOUT}'
@@ -2732,6 +3318,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: 2b3c5e540fd146e19930bd6e317e183e
+              expression: 'nodata(/FortiGate by HTTP/fgate.service.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get service licenses'
+              priority: WARNING
+              description: 'The API master collector item "Get service licenses" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 8d8d4e7073db4ad497f4ca8dfffa043c
           name: 'Device system info item errors'
           type: DEPENDENT
@@ -2789,6 +3386,17 @@ zabbix_export:
           tags:
             - tag: component
               value: raw
+          triggers:
+            - uuid: b2319514555b42efaf157ce354922029
+              expression: 'nodata(/FortiGate by HTTP/fgate.system.get_data,{$FGATE.API.NODATA})=1'
+              name: 'No data from API master collector: Get system info'
+              priority: WARNING
+              description: 'The API master collector item "Get system info" has not received data within {$FGATE.API.NODATA}. This detects stalled API polling, authentication/TLS/connectivity problems, or Zabbix script/HTTP-agent execution issues. No no-data trigger is configured for the FortiGate hardware sensor collector because some models legitimately return no sensor data.'
+              tags:
+                - tag: component
+                  value: api
+                - tag: scope
+                  value: availability
         - uuid: 924a859579bd41a9b26dc83f92100577
           name: 'System uptime'
           type: DEPENDENT
@@ -2819,78 +3427,6 @@ zabbix_export:
               tags:
                 - tag: scope
                   value: notice
-        - uuid: 5620234d70d74d0fa113964de1a0de07
-          name: 'ICMP loss'
-          type: SIMPLE
-          key: 'icmppingloss[{$FGATE.API.FQDN}]'
-          value_type: FLOAT
-          tags:
-            - tag: 'Customer Read'
-          triggers:
-            - uuid: ed2c1b5fa9ab419e86454f13cfe6413a
-              expression: 'last(/FortiGate by HTTP/icmppingloss[{$FGATE.API.FQDN}])>=100'
-              name: 'Host {HOST.NAME} {$FGATE.API.FQDN} ICMP unreachable'
-              priority: AVERAGE
-              tags:
-                - tag: 'Customer Read'
-                - tag: 'FW ICMP'
-                  value: Unreachable
-            - uuid: d9e29c68d8d6475a81d72bc6b207340d
-              expression: 'last(/FortiGate by HTTP/icmppingloss[{$FGATE.API.FQDN}])>20 and last(/FortiGate by HTTP/icmppingloss[{$FGATE.API.FQDN}])<100'
-              name: 'ICMP high packet loss on {HOST.NAME} ({$FGATE.API.FQDN})'
-              priority: WARNING
-              tags:
-                - tag: 'Customer Read'
-                - tag: 'FW ICMP'
-                  value: 'packet loss'
-        - uuid: 9f1acb3c2770446e8748506feffa623b
-          name: 'ICMP response time'
-          type: SIMPLE
-          key: 'icmppingsec[{$FGATE.API.FQDN}]'
-          value_type: FLOAT
-          tags:
-            - tag: 'Customer Read'
-          triggers:
-            - uuid: b66d8c54705d4a5a90908677785c8e42
-              expression: 'last(/FortiGate by HTTP/icmppingsec[{$FGATE.API.FQDN}])>0.200'
-              name: 'High ICMP response time on {HOST.NAME} ({$FGATE.API.FQDN})'
-              priority: AVERAGE
-              tags:
-                - tag: 'Customer Read'
-                - tag: 'FW ICMP'
-                  value: 'Response Time'
-        - uuid: 04173ac206ec40a390120cfb38a0c843
-          name: ICMP
-          type: SIMPLE
-          key: 'icmpping[{$FGATE.API.FQDN}]'
-          tags:
-            - tag: 'Customer Read'
-        - uuid: 27d30f93ff7c49d89537c43bad5f9453
-          name: 'Check port availability'
-          type: SIMPLE
-          key: 'net.tcp.service["{$FGATE.SCHEME}","{$FGATE.API.FQDN}","{$FGATE.API.PORT}"]'
-          valuemap:
-            name: 'Service state'
-          preprocessing:
-            - type: DISCARD_UNCHANGED_HEARTBEAT
-              parameters:
-                - 10m
-          tags:
-            - tag: component
-              value: health
-            - tag: component
-              value: network
-          triggers:
-            - uuid: 26abf8698af247d09c325ab1cb3e9903
-              expression: 'last(/FortiGate by HTTP/net.tcp.service["{$FGATE.SCHEME}","{$FGATE.API.FQDN}","{$FGATE.API.PORT}"])=0'
-              name: 'Port {$FGATE.API.PORT} is unavailable'
-              priority: AVERAGE
-              manual_close: 'YES'
-              tags:
-                - tag: Fortigate
-                  value: API
-                - tag: scope
-                  value: availability
       discovery_rules:
         - uuid: 657fd9b9be094331857d24386ad6bad0
           name: 'BGP neighbor discovery'
@@ -3908,19 +4444,19 @@ zabbix_export:
                   var output = [];
                   var results = Array.isArray(data.results) ? data.results : [];
                   
-                  results.forEach(function (phase1) {
+                  results.forEach(function  (phase1) {
                       var phase1Name = String(phase1.p1name || phase1.phase1name || phase1.name || phase1.vpn_name || '');
-                      var proxyids = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
+                      var proxyids  = Array.isArray(phase1.proxyid) ? phase1.proxyid : [];
                   
                       proxyids.forEach(function (p2) {
                           var row = {};
-                          for (var key in p2) {
+                          for  (var key in p2) {
                               if (Object.prototype.hasOwnProperty.call(p2, key)) {
                                   row[key] = p2[key];
-                              }
+                               }
                           }
                           row.ipsec_tunnel_name = String(p2.p2name || p2.name || '');
-                          row.ipsec_phase1_name = String(p2.p1name || phase1Name || '');
+                          row.ipsec_phase1_name = String(p2.p1name  || phase1Name || '');
                           output.push(row);
                       });
                   });
@@ -4241,7 +4777,7 @@ zabbix_export:
                       	'vdom-link',
                       	'loopback',
                        	'switch',
-                      	'vap-switch',
+                       	'vap-switch',
                       	'wl-mesh',
                       	'fext-wan',
                       	'vxlan',
@@ -4250,7 +4786,7 @@ zabbix_export:
                       	'switch-vlan',
                        	'emac-vlan',
                       	'ssl',
-                      	'lan-extension'
+                      	 'lan-extension'
                       ].indexOf(value);
                       return idx !== -1 ? idx : 30;
                 - type: DISCARD_UNCHANGED_HEARTBEAT
@@ -5017,6 +5553,191 @@ zabbix_export:
             - type: DISCARD_UNCHANGED_HEARTBEAT
               parameters:
                 - 1h
+        - uuid: ed198d54e67c477a80ffa34b485d3547
+          name: 'Hardware sensors discovery'
+          type: DEPENDENT
+          key: fgate.sensor.discovery
+          delay: '0'
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#SENSORNAME}'
+                value: '{$FGATE.SENSOR.NAME.MATCHES}'
+                formulaid: A
+              - macro: '{#SENSORNAME}'
+                value: '{$FGATE.SENSOR.NAME.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+                formulaid: B
+          description: 'Discovers hardware sensors returned by the FortiGate REST API. If the device model does not expose sensor-info, the master item returns an empty array and no sensors are discovered.'
+          item_prototypes:
+            - uuid: 610735b7dc7c4184905d18d2e5ba9350
+              name: 'Hardware sensor [{#SENSORNAME}]: Alarm status'
+              type: DEPENDENT
+              key: 'fgate.sensor.alarm["{#SENSORKEY}"]'
+              delay: '0'
+              description: 'Normalized alarm state for this hardware sensor: 0=ok, 1=alarm, 2=unknown. Alarm trigger prototype is disabled by default using {$FGATE.SENSOR.ALARM.CONTROL}=0 until real sensor JSON has been verified on the device model.'
+              valuemap:
+                name: 'Sensor alarm status'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.alarm
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '2'
+              master_item:
+                key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+              trigger_prototypes:
+                - uuid: 0203958233f743ca8f972a6684a5a0a2
+                  expression: '{$FGATE.SENSOR.ALARM.CONTROL:"{#SENSORNAME}"}=1 and last(/FortiGate by HTTP/fgate.sensor.alarm["{#SENSORKEY}"])=1'
+                  name: 'Hardware sensor [{#SENSORNAME}]: Alarm active'
+                  opdata: 'Current alarm state: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Hardware sensor reports an alarm state. This trigger is controlled by {$FGATE.SENSOR.ALARM.CONTROL} and is disabled by default until sensor output is validated for the specific FortiGate model.'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 8d6c3753f65141688e309c4b7464df7a
+              name: 'Hardware sensor [{#SENSORNAME}]: Get data'
+              type: DEPENDENT
+              key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              delay: '0'
+              value_type: TEXT
+              trends: '0'
+              description: 'Normalized data for this discovered FortiGate hardware sensor.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.data
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '[]'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var data = JSON.parse(value), key = '{#SENSORKEY}';
+                      if (!Array.isArray(data)) { data = []; }
+                      for (var i = 0; i < data.length; i++)  {
+                          if (String(data[i].key) === key) {
+                              return JSON.stringify(data[i]);
+                          }
+                      }
+                      return '{}';
+              master_item:
+                key: fgate.sensor.get_data
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+            - uuid: d1be9cdc91794e3fbc47f590e0fdcb8d
+              name: 'Hardware sensor [{#SENSORNAME}]: Status'
+              type: DEPENDENT
+              key: 'fgate.sensor.status["{#SENSORKEY}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Textual sensor status as returned or derived from the FortiGate API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.status
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+            - uuid: 7a20a365e1a84a9088f569ce6b2ef6a4
+              name: 'Hardware sensor [{#SENSORNAME}]: Type'
+              type: DEPENDENT
+              key: 'fgate.sensor.type["{#SENSORKEY}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Sensor type/category when exposed by the FortiGate API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.type
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+            - uuid: d80b96644d304738892231570c136861
+              name: 'Hardware sensor [{#SENSORNAME}]: Unit'
+              type: DEPENDENT
+              key: 'fgate.sensor.unit["{#SENSORKEY}"]'
+              delay: '0'
+              value_type: CHAR
+              trends: '0'
+              description: 'Sensor unit when exposed by the FortiGate API.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.unit
+                  error_handler: CUSTOM_VALUE
+              master_item:
+                key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+            - uuid: 32fc5473177045dca0ac38ef5701108b
+              name: 'Hardware sensor [{#SENSORNAME}]: Value'
+              type: DEPENDENT
+              key: 'fgate.sensor.value["{#SENSORKEY}"]'
+              delay: '0'
+              value_type: FLOAT
+              units: '{#SENSORUNIT}'
+              description: 'Numeric reading for this hardware sensor when exposed by the FortiGate API. If the API only returns textual status, this value can be 0 and the status/alarm items should be used instead.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.value
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              master_item:
+                key: 'fgate.sensor.get_data["{#SENSORKEY}"]'
+              tags:
+                - tag: component
+                  value: sensor
+                - tag: sensor
+                  value: '{#SENSORNAME}'
+          master_item:
+            key: fgate.sensor.get_data
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.data
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '[]'
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var data = JSON.parse(value), out = [];
+                  if (!Array.isArray(data)) { data = []; }
+                  data.forEach(function (v) {
+                      if (typeof v !==  'object' || v === null) { return; }
+                      out.push({
+                          "{#SENSORKEY}": String(v.key || ''),
+                          "{#SENSORNAME}": String(v.name  || v.key || ''),
+                          "{#SENSORTYPE}": String(v.type || ''),
+                          "{#SENSORCATEGORY}": String(v.category || ''),
+                           "{#SENSORUNIT}": String(v.unit || '')
+                      });
+                  });
+                  return JSON.stringify(out);
         - uuid: 5fe5e9dfee0448d7a6552c3c5ec9e72c
           name: 'Service discovery'
           type: DEPENDENT
@@ -5130,27 +5851,27 @@ zabbix_export:
                       	'free_license',
                       	'vm_valid',
                        	'cloud_confirm_email',
-                      	'cloud_error',
+                       	'cloud_error',
                       	'cloud_logged_out',
                       	'cloud_login_in_progress',
                       	'expired',
                        	'expires_soon',
                       	'free_license_exhausted',
-                      	'licensed_exhausted',
+                       	'licensed_exhausted',
                       	'no_license',
                       	'no_support',
                       	 'not_registered',
                       	'pending',
                       	'unavailable',
                       	'update_manual',
-                      	'update_push',
+                       	'update_push',
                       	'update_sched',
                       	 'vm_eval_expired',
                       	'vm_expired',
                       	'vm_expires_soon',
                       	'vm_grace_period',
                       	'vm_invalid',
-                      	'vm_pending',
+                       	'vm_pending',
                        	'vm_validation_overdue',
                       ].indexOf(value);
                       return idx !== -1 ? idx : 30;
@@ -5424,6 +6145,9 @@ zabbix_export:
         - macro: '{$FGATE.API.IPSEC.VDOM}'
           value: root
           description: 'VDOM in which IPSec tunnels reside.'
+        - macro: '{$FGATE.API.NODATA}'
+          value: 15m
+          description: 'No-data threshold for FortiGate API master collector triggers. This is not used for hardware sensor data because some models legitimately expose no sensor-info data.'
         - macro: '{$FGATE.API.PORT}'
           value: '443'
           description: 'The port of FortiGate API endpoint.'
@@ -5493,26 +6217,29 @@ zabbix_export:
           value: https
           description: 'Request scheme for the FortiGate API. Use https for current FortiOS versions.'
         - macro: '{$FGATE.SENSOR.ALARM.CONTROL}'
-          value: '1'
-          description: 'Set to 0 globally or with sensor name context to disable sensor alarm triggers.'
+          value: '0'
+          description: 'Set to 1 globally or with sensor name context after verifying real sensor JSON on the model. Default 0 keeps sensor alarm trigger prototypes present but disabled to avoid noise on models without sensor data.'
         - macro: '{$FGATE.SENSOR.API.404_IS_OK}'
           value: '1'
-          description: 'Treat HTTP 404 from all configured hardware sensor API paths as not-supported and return an empty supported payload instead of an item error. Set to 0 if missing sensor API paths should be reported as an error.'
+          description: 'Treat HTTP 404 from all configured hardware sensor API paths as not-supported/empty data instead of an item error. Keep at 1 for models such as smaller FortiGate units that may not expose sensor-info.'
         - macro: '{$FGATE.SENSOR.API.FALLBACK_PATH}'
-          value: /api/v2/monitor/system/sensor-info
-          description: 'Fallback FortiGate hardware sensor REST API path for FortiOS/API variants that expose sensor-info without the /select action.'
-        - macro: '{$FGATE.SENSOR.API.PATH}'
           value: /api/v2/monitor/system/sensor-info/select
-          description: 'Primary FortiGate hardware sensor REST API path. The monitor action path ending in /select is required by several FortiOS API implementations.'
+          description: 'Fallback FortiGate hardware sensor REST API path for FortiOS/API variants that expose sensor-info through the /select action.'
+        - macro: '{$FGATE.SENSOR.API.PATH}'
+          value: /api/v2/monitor/system/sensor-info
+          description: 'Primary FortiGate hardware sensor REST API path. The collector also appends {$FGATE.SENSOR.API.VDOM} when configured.'
+        - macro: '{$FGATE.SENSOR.API.VDOM}'
+          value: root
+          description: 'VDOM query parameter for the FortiGate hardware sensor API. Set to the relevant VDOM or leave empty to omit vdom from the sensor API request.'
         - macro: '{$FGATE.SENSOR.MONITOR}'
           value: '1'
-          description: 'Set to 0 on hosts where hardware sensor monitoring is unavailable or not wanted. When set to 0, the sensor script returns an empty supported payload and does not call the FortiGate sensor API. Leave at 1 to auto-try sensors and silently ignore all-404 responses when {$FGATE.SENSOR.API.404_IS_OK}=1.'
+          description: 'Set to 0 on hosts where hardware sensor API polling is not wanted. With the default 1, the collector tries the API but treats HTTP 404/empty sensor data as normal when {$FGATE.SENSOR.API.404_IS_OK}=1. Some models legitimately return no sensor data.'
         - macro: '{$FGATE.SENSOR.NAME.MATCHES}'
           value: '.*'
-          description: 'This macro is used in hardware sensor discovery. Can be overridden on the host or linked template level.'
+          description: 'Hardware sensor discovery include regex for sensor names ({#SENSORNAME}).'
         - macro: '{$FGATE.SENSOR.NAME.NOT_MATCHES}'
           value: CHANGE_IF_NEEDED
-          description: 'This macro is used in hardware sensor discovery. Can be overridden on the host or linked template level.'
+          description: 'Hardware sensor discovery exclude regex for sensor names ({#SENSORNAME}). Set to (?!) to exclude nothing.'
         - macro: '{$FIRMWARE.UPDATES.CONTROL}'
           value: '1'
           description: 'This macro is used in "New available firmware found" trigger.'
@@ -5864,55 +6591,6 @@ zabbix_export:
           pages:
             - name: Overview
               widgets:
-                - type: item
-                  name: 'Port availability'
-                  width: '12'
-                  hide_header: 'YES'
-                  fields:
-                    - type: STRING
-                      name: bg_color
-                      value: FFCA28
-                    - type: STRING
-                      name: description
-                      value: Port
-                    - type: INTEGER
-                      name: desc_bold
-                      value: '1'
-                    - type: STRING
-                      name: desc_color
-                      value: FFFFFF
-                    - type: INTEGER
-                      name: desc_v_pos
-                      value: '0'
-                    - type: ITEM
-                      name: itemid.0
-                      value:
-                        host: 'FortiGate by HTTP'
-                        key: 'net.tcp.service["{$FGATE.SCHEME}","{$FGATE.API.FQDN}","{$FGATE.API.PORT}"]'
-                    - type: INTEGER
-                      name: show.0
-                      value: '1'
-                    - type: INTEGER
-                      name: show.1
-                      value: '2'
-                    - type: STRING
-                      name: thresholds.0.color
-                      value: FF465C
-                    - type: STRING
-                      name: thresholds.0.threshold
-                      value: '0'
-                    - type: STRING
-                      name: thresholds.1.color
-                      value: 0EC9AC
-                    - type: STRING
-                      name: thresholds.1.threshold
-                      value: '1'
-                    - type: STRING
-                      name: value_color
-                      value: FFFFFF
-                    - type: INTEGER
-                      name: value_size
-                      value: '35'
                 - type: item
                   name: 'Number of CPUs'
                   'y': '2'
@@ -6410,6 +7088,476 @@ zabbix_export:
                     - type: INTEGER
                       name: value_size
                       value: '40'
+            - name: 'API health'
+              widgets:
+                - type: item
+                  name: 'API status'
+                  width: '18'
+                  height: '4'
+                  hide_header: 'YES'
+                  fields:
+                    - type: STRING
+                      name: bg_color
+                      value: FFCA28
+                    - type: STRING
+                      name: description
+                      value: 'API status'
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: STRING
+                      name: desc_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: desc_v_pos
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.api.status
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: value_size
+                      value: '30'
+                - type: problems
+                  name: 'API collector problems'
+                  'y': '4'
+                  width: '72'
+                  height: '8'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: FGAPIH1
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                    - type: STRING
+                      name: tag_priority
+                      value: scope
+                - type: item
+                  name: 'System errors'
+                  'y': '12'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.system.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Interface errors'
+                  'y': '16'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.netif.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'HA errors'
+                  'y': '20'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.ha.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'IPSec errors'
+                  'y': '24'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.ipsec.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: honeycomb
+                  name: 'Sensor alarms'
+                  'y': '28'
+                  width: '72'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Hardware sensor *: Alarm status'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^Hardware sensor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '18'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: FGSEN1
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '26'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                - type: item
+                  name: 'Sensor API supported'
+                  x: '18'
+                  width: '18'
+                  height: '4'
+                  hide_header: 'YES'
+                  fields:
+                    - type: STRING
+                      name: bg_color
+                      value: FFCA28
+                    - type: STRING
+                      name: description
+                      value: 'Sensor API supported'
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: STRING
+                      name: desc_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: desc_v_pos
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.supported
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: FF465C
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 0EC9AC
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: FFFFFF
+                    - type: INTEGER
+                      name: value_size
+                      value: '30'
+                - type: item
+                  name: 'Firmware errors'
+                  x: '24'
+                  'y': '12'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.firmware.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Firewall policy errors'
+                  x: '24'
+                  'y': '16'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.fwp.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'SD-WAN errors'
+                  x: '24'
+                  'y': '20'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sdwan.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Sensor collector errors'
+                  x: '24'
+                  'y': '24'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Sensor count'
+                  x: '36'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.count
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '26'
+                - type: item
+                  name: 'Resource errors'
+                  x: '48'
+                  'y': '12'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.resources.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Service license errors'
+                  x: '48'
+                  'y': '16'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.service.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'BGP errors'
+                  x: '48'
+                  'y': '20'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.bgp.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
+                - type: item
+                  name: 'Sensor collector message'
+                  x: '48'
+                  'y': '24'
+                  width: '24'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.message
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '1'
+                    - type: STRING
+                      name: value_color
+                      value: 1E88E5
+                    - type: INTEGER
+                      name: value_size
+                      value: '16'
         - uuid: 52bfd46c2b954dabb85a9b637a8ef21c
           name: 'FortiGate: HA Diagnostics'
           pages:
@@ -7428,6 +8576,311 @@ zabbix_export:
                     - type: STRING
                       name: thresholds.2.threshold
                       value: '2'
+        - uuid: 6a98c2f80ae64c1b9e5dd975eb63e321
+          name: 'FortiGate: Sensors'
+          pages:
+            - name: 'Sensor API and discovered sensors'
+              widgets:
+                - type: item
+                  name: 'Sensor API supported'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.supported
+                    - type: STRING
+                      name: reference
+                      value: SNS01
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '32'
+                - type: item
+                  name: 'Sensor collector message'
+                  'y': '4'
+                  width: '72'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.message
+                    - type: STRING
+                      name: reference
+                      value: SNS04
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '32'
+                - type: honeycomb
+                  name: 'Sensor alarm state'
+                  'y': '8'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Hardware sensor *: Alarm status'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^Hardware sensor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '20'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: SNS05
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '22'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
+                - type: honeycomb
+                  name: 'Sensor textual status'
+                  'y': '16'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Hardware sensor *: Status'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^Hardware sensor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '20'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: SNS07
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '22'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
+                - type: problems
+                  name: 'Sensor/API related problems'
+                  'y': '24'
+                  width: '72'
+                  height: '6'
+                  fields:
+                    - type: INTEGER
+                      name: acknowledgement_status
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: SNS09
+                    - type: INTEGER
+                      name: show
+                      value: '3'
+                    - type: INTEGER
+                      name: show_opdata
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '1'
+                - type: item
+                  name: 'Sensor count'
+                  x: '18'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.count
+                    - type: STRING
+                      name: reference
+                      value: SNS02
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '32'
+                - type: item
+                  name: 'Sensor item errors'
+                  x: '36'
+                  width: '36'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiGate by HTTP'
+                        key: fgate.sensor.data_errors
+                    - type: STRING
+                      name: reference
+                      value: SNS03
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: units_show
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '32'
+                - type: honeycomb
+                  name: 'Sensor values'
+                  x: '36'
+                  'y': '8'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Hardware sensor *: Value'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^Hardware sensor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '20'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: SNS06
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '22'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
+                - type: honeycomb
+                  name: 'Sensor units'
+                  x: '36'
+                  'y': '16'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'Hardware sensor *: Unit'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^Hardware sensor \[([^]]+)\]:.*$", \1)}'
+                    - type: INTEGER
+                      name: primary_label_size
+                      value: '20'
+                    - type: INTEGER
+                      name: primary_label_size_type
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: SNS08
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: secondary_label
+                      value: '{{ITEM.LASTVALUE}}'
+                    - type: INTEGER
+                      name: secondary_label_size
+                      value: '22'
+                    - type: INTEGER
+                      name: secondary_label_size_type
+                      value: '1'
+                    - type: INTEGER
+                      name: secondary_label_type
+                      value: '0'
         - uuid: a1c7206d9312486b9d09dc9ef34ed98e
           name: 'FortiGate: Statistics'
           pages:

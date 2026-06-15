@@ -5,10 +5,6 @@ zabbix_export:
       name: 'Fortinet Office Network'
     - uuid: 41d23565286045a6855bdf9b7c52dc87
       name: 'Templates/Network devices'
-    - uuid: df97989912ff40919985d25706920120
-      name: 'Fortinet Office Network'
-    - uuid: 41d23565286045a6855bdf9b7c52dc87
-      name: 'Templates/Network devices'
   templates:
     - uuid: 12cc788d218d4af5ac8df7f6b02ac40a
       template: 'FortiAP by FortiGate HTTP'
@@ -52,7 +48,7 @@ zabbix_export:
         Dashboard update: consolidates FortiAP dashboards into one host dashboard with pages for Overview, AP clients and health, AP wireless quality, and AP operations.
       vendor:
         name: Keberneth
-        version: 7.0.4
+        version: 7.0.5
       groups:
         - name: 'Fortinet Office Network'
         - name: 'Templates/Network devices'
@@ -176,6 +172,14 @@ zabbix_export:
             - tag: component
               value: health
           triggers:
+            - uuid: cbc37d8e49f94e44bc965cbc2f79e2ba
+              expression: 'nodata(/FortiAP by FortiGate HTTP/fap.api.status,{$FGATE.AP.NODATA.TIME})=1'
+              name: 'No fresh FortiAP API data received'
+              priority: AVERAGE
+              description: 'No new API availability value has been received within the configured no-data window.'
+              tags:
+                - tag: scope
+                  value: availability
             - uuid: be0960fbe833420188fb601cfe4245cf
               expression: 'last(/FortiAP by FortiGate HTTP/fap.api.status)=0'
               name: 'Unexpected response from API'
@@ -1249,6 +1253,25 @@ zabbix_export:
                   value: '{#APNAME}'
                 - tag: component
                   value: system
+          trigger_prototypes:
+            - uuid: ff6f2a538e5d45e9ae2e6ecd13a80364
+              expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.clients[{#APKEY}])>0 and last(/FortiAP by FortiGate HTTP/fap.ap.signal_avg[{#APKEY}])<{$FGATE.AP.SIGNAL.MIN:"{#APNAME}"} and last(/FortiAP by FortiGate HTTP/fap.ap.signal_avg[{#APKEY}])<>0'
+              name: 'FortiAP [{#APNAME}]: Average client signal is low'
+              opdata: 'Signal: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The AP has connected clients and the average client signal is below the configured threshold.'
+              tags:
+                - tag: scope
+                  value: performance
+            - uuid: 2189d702287a4b6b82992db4c3c32cef
+              expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.clients[{#APKEY}])>0 and last(/FortiAP by FortiGate HTTP/fap.ap.snr_avg[{#APKEY}])>0 and last(/FortiAP by FortiGate HTTP/fap.ap.snr_avg[{#APKEY}])<{$FGATE.AP.SNR.MIN:"{#APNAME}"}'
+              name: 'FortiAP [{#APNAME}]: Average client SNR is low'
+              opdata: 'SNR: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The AP has connected clients and the average client SNR is below the configured threshold.'
+              tags:
+                - tag: scope
+                  value: performance
           graph_prototypes:
             - uuid: 5d05f0a36137437c8e08f74547d217d5
               name: 'FortiAP [{#APNAME}]: Client count'
@@ -1407,6 +1430,44 @@ zabbix_export:
                   value: '{#APNAME}'
                 - tag: component
                   value: operations
+            - uuid: 14e05d6f43f344a68c2a48430981ee32
+              name: 'FortiAP [{#APNAME}]: Memory utilization'
+              type: DEPENDENT
+              key: 'fap.ap.mem_util[{#APKEY}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              description: 'Memory utilization calculated from total and free memory returned by the FortiGate managed-FortiAP API data.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.data[?(@.key == "{#APKEY}")].first()'
+                  error_handler: DISCARD_VALUE
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      var obj = JSON.parse(value);
+                      var total = Number(obj.mem_total || 0);
+                      var free = Number(obj.mem_free || 0);
+                      if (total <= 0) { return 0; }
+                      return Math.round(((total - free) * 100 / total) * 100) / 100;
+              master_item:
+                key: fap.aps.get_data
+              tags:
+                - tag: ap
+                  value: '{#APNAME}'
+                - tag: component
+                  value: operations
+              trigger_prototypes:
+                - uuid: 7aa9013285b6410abad802c443ac86e3
+                  expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.mem_util[{#APKEY}])>{$FGATE.AP.MEM.WARN}'
+                  name: 'FortiAP [{#APNAME}]: Memory utilization is high'
+                  opdata: 'Memory: {ITEM.LASTVALUE1}'
+                  priority: WARNING
+                  description: 'Calculated FortiAP memory utilization is above the configured threshold.'
+                  tags:
+                    - tag: scope
+                      value: performance
             - uuid: 92c2007a4dd84abfa3726fea6d1fc5fd
               name: 'FortiAP [{#APNAME}]: Override profile'
               type: DEPENDENT
@@ -1491,6 +1552,13 @@ zabbix_export:
                   item:
                     host: 'FortiAP by FortiGate HTTP'
                     key: 'fap.ap.mem_total[{#APKEY}]'
+            - uuid: bd6a4470869d4f889f48902d60b23e5b
+              name: 'FortiAP [{#APNAME}]: Memory utilization'
+              graph_items:
+                - color: F7941D
+                  item:
+                    host: 'FortiAP by FortiGate HTTP'
+                    key: 'fap.ap.mem_util[{#APKEY}]'
             - uuid: 9e267b647f48402686bd89fe00677108
               name: 'FortiAP [{#APNAME}]: Uptime'
               graph_items:
@@ -1529,9 +1597,24 @@ zabbix_export:
         - macro: '{$FGATE.AP.CLIENT.WARN}'
           value: '100'
           description: 'Warning threshold for connected clients on a single FortiAP.'
+        - macro: '{$FGATE.AP.CONNECTED.MIN.PCT}'
+          value: '100'
+          description: 'Minimum acceptable percentage of managed FortiAP devices that must be connected.'
         - macro: '{$FGATE.AP.CPU.WARN}'
           value: '80'
           description: 'Warning threshold (percent) for FortiAP CPU usage.'
+        - macro: '{$FGATE.AP.MEM.WARN}'
+          value: '85'
+          description: 'Warning threshold (percent) for FortiAP memory utilization.'
+        - macro: '{$FGATE.AP.NODATA.TIME}'
+          value: 10m
+          description: 'Maximum age of the FortiAP API availability item before the no-data trigger fires.'
+        - macro: '{$FGATE.AP.SIGNAL.MIN}'
+          value: '-75'
+          description: 'Minimum acceptable average client signal in dBm for a FortiAP. Lower values trigger a warning when clients are connected.'
+        - macro: '{$FGATE.AP.SNR.MIN}'
+          value: '20'
+          description: 'Minimum acceptable average client SNR in dB for a FortiAP. Lower values trigger a warning when clients are connected.'
         - macro: '{$FGATE.API.FQDN}'
           description: 'FortiGate API FQDN/IP (ex. ngfw.example.com).'
         - macro: '{$FGATE.API.PORT}'
@@ -1697,6 +1780,25 @@ zabbix_export:
                     - type: STRING
                       name: tag_priority
                       value: scope
+                - type: item
+                  name: 'API collection errors'
+                  'y': '16'
+                  width: '72'
+                  fields:
+                    - type: STRING
+                      name: description
+                      value: 'Controller collector'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        key: fap.data_errors
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
                 - type: item
                   name: 'Managed AP count'
                   x: '12'
@@ -2583,6 +2685,45 @@ zabbix_export:
                       name: secondary_label_size_type
                       value: '1'
                 - type: honeycomb
+                  name: 'Memory utilization per AP'
+                  'y': '22'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: STRING
+                      name: items.0
+                      value: 'FortiAP *: Memory utilization'
+                    - type: INTEGER
+                      name: maintenance
+                      value: '1'
+                    - type: STRING
+                      name: primary_label
+                      value: '{{ITEM.NAME}.regsub("^FortiAP \[([^]]+)\]:.*$", \1)}'
+                    - type: STRING
+                      name: reference
+                      value: MEMORYUT861E
+                    - type: INTEGER
+                      name: rf_rate
+                      value: '60'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 689F38
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFBF00
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '70'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: FF0000
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '85'
+                - type: honeycomb
                   name: 'Memory free per AP'
                   x: '18'
                   width: '18'
@@ -2694,6 +2835,21 @@ zabbix_export:
                     - type: STRING
                       name: reference
                       value: FOG02
+                - type: graphprototype
+                  name: 'Memory utilization graphs'
+                  x: '36'
+                  'y': '22'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: GRAPH_PROTOTYPE
+                      name: graphid.0
+                      value:
+                        host: 'FortiAP by FortiGate HTTP'
+                        name: 'FortiAP [{#APNAME}]: Memory utilization'
+                    - type: STRING
+                      name: reference
+                      value: MEMORYUTBA0B
                 - type: honeycomb
                   name: 'Last failure'
                   x: '48'
@@ -2784,51 +2940,20 @@ zabbix_export:
               newvalue: down
             - value: '1'
               newvalue: up
+  triggers:
+    - uuid: 8b59ca4f6cdf4d04b1bbb5ee6ab8bf4f
+      expression: 'last(/FortiAP by FortiGate HTTP/fap.ap.count)>0 and last(/FortiAP by FortiGate HTTP/fap.ap.connected_pct)<{$FGATE.AP.CONNECTED.MIN.PCT}'
+      name: 'Managed FortiAP connected percentage is below minimum'
+      opdata: 'Connected: {ITEM.LASTVALUE1}'
+      priority: AVERAGE
+      description: 'At least one managed FortiAP appears disconnected, or the connected percentage is below the configured minimum.'
+      dependencies:
+        - name: 'Unexpected response from API'
+          expression: 'last(/FortiAP by FortiGate HTTP/fap.api.status)=0'
+      tags:
+        - tag: scope
+          value: availability
   graphs:
-    - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
-      name: 'FortiAP: Managed AP state counts'
-      graph_items:
-        - color: 1E88E5
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.ap.count
-        - sortorder: '1'
-          color: 199C0D
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.ap.connected
-        - sortorder: '2'
-          color: F63100
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.ap.not_connected
-        - sortorder: '3'
-          color: F7941D
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.ap.with_clients
-    - uuid: 15eebea279d94571a5873afeaa6d6919
-      name: 'FortiAP: Wireless client count'
-      graph_items:
-        - color: 6C59DC
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.client.count
-    - uuid: 0e14e8539bd446218d9dfa5fe6de44be
-      name: 'FortiAP: Wireless quality averages'
-      graph_items:
-        - drawtype: GRADIENT_LINE
-          color: F7941D
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.client.signal_avg
-        - sortorder: '1'
-          drawtype: BOLD_LINE
-          color: 199C0D
-          yaxisside: RIGHT
-          item:
-            host: 'FortiAP by FortiGate HTTP'
-            key: fap.client.snr_avg
     - uuid: d87b8e29a1c74f90ac3efb48c009bf3f
       name: 'FortiAP: Managed AP state counts'
       graph_items:
