@@ -1,0 +1,1787 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: '41d23565286045a6855bdf9b7c52dc87'
+      name: Templates/Network devices
+  templates:
+    - uuid: '45791399380e4bf7a461a837d01e065b'
+      template: FortiGate Extended Rule and Object Changes by HTTP
+      name: 'FortiGate Extended: Rule and Object Changes by HTTP'
+      description: |
+        Extension for the "FortiGate by HTTP" template. Detects changes to firewall policies, address objects, address groups (including members) and services through the FortiOS REST API, and raises an Information problem that names the changed objects. When the FortiGate config-change log can be read through the API, the problem also shows who made the change, from where, exactly when and which attributes changed. The template only reads from the FortiGate (GET requests).
+
+        Setup:
+        1. Link this template to a host that already has "FortiGate by HTTP". It reuses that template's connection macros ({$FGATE.API.FQDN}, {$FGATE.API.TOKEN}, {$FGATE.API.PORT}, {$FGATE.SCHEME}, {$FGATE.HTTP.PROXY}) and changes nothing in it.
+        2. The REST API admin profile needs read access to Firewall and Log & Report. On multi-VDOM units the admin needs access to the tracked VDOMs; {$FGATE.CHG.VDOMS}=* lists them (needs global scope, otherwise set the VDOM names).
+        3. Optional: add tables to {$FGATE.CHG.TABLES}, for example firewall/vip, firewall/vipgrp, firewall/local-in-policy, firewall/proxy-policy, firewall.schedule/recurring or firewall/ippool.
+
+        How it works:
+        - Every {$FGATE.CHG.INTERVAL} (default 1h) the script item "Change tracking: Get snapshot" reads the tracked tables of each VDOM and reduces every object to a fingerprint: its key, a content hash, one short hash per attribute group (source, destination, service, NAT, profiles, ...) and, for groups, the member names. Apart from names, members and the config-change log text, no configuration values are stored.
+        - Per table, a calculated item compares the two latest snapshots and reports added, deleted, modified and moved (policy order) objects. The problem "<table> changed [<vdom>]: ..." has severity Information, resolves at the next check without changes and can be closed manually. Disable it for one table with {$FGATE.CHG.ALERT:"<table>"}=0, for example {$FGATE.CHG.ALERT:"firewall.address"}=0.
+        - Config-change entries of the FortiGate system event log (log IDs 0100044544-0100044547) are read from {$FGATE.CHG.LOG.SOURCE} (default auto: disk, memory, FortiAnalyzer or FortiGate Cloud, whichever is enabled) and attached to the changed objects.
+        - After a FortiOS upgrade only differences confirmed by the config-change log are reported, so attributes added by the new firmware do not raise false changes.
+        - Warning problems: no snapshot collected for {$FGATE.CHG.NODATA}, and collector errors. Information problem: config-change log not readable.
+
+        Limits:
+        - Something changed and changed back between two checks is not reported as a change; it is visible in "Change tracking: Recent config changes (FortiGate log)".
+        - Zabbix text values are limited to 64 KB, so big tables (roughly 2000+ objects) are split into several snapshot parts automatically. In the check where a table is split, that table is re-baselined instead of compared, and new parts start with a baseline.
+        - Policy moves are detected within each snapshot part.
+
+        History: snapshots are kept for {$FGATE.CHG.SNAPSHOT.HISTORY} (default 1d, needed for the comparison); change summaries, details and counts for {$FGATE.CHG.HISTORY} (default 7d).
+      vendor:
+        name: Keberneth
+        version: '7.0.0.0'
+      groups:
+        - name: Templates/Network devices
+      items:
+        - uuid: c4a540403daf4205b00b5aac66b8a2f4
+          name: 'Change tracking: Get snapshot'
+          type: SCRIPT
+          key: fgate.chg.get
+          delay: '{$FGATE.CHG.INTERVAL}'
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          params: |
+            /*
+             * FortiGate rule & object change collector (Zabbix 7.0 Script item, ES5 / Duktape).
+             *
+             * Reads the monitored cmdb tables (policies, addresses, groups, services ...) for every
+             * monitored VDOM, reduces every object to a short fingerprint and returns one JSON
+             * document. The previous fingerprint is compared by the calculated "diff" items, so this
+             * script keeps no state of its own. Config-change entries from the FortiGate system event
+             * log (log id 0100044544-0100044547) are attached to the fingerprints so the change report
+             * can say who changed what and exactly when.
+             */
+            var FMT = 'FGCHG1',
+            	BUCKET_LIMIT = 60000,        // max UTF-8 bytes per fingerprint value (Zabbix text limit is 65535)
+            	MAX_BUCKETS = 64,
+            	LOG_BUCKET_LIMIT = 12000,    // max bytes of log lines stored with one fingerprint bucket
+            	LOG_ATTR_LIMIT = 400,        // max length of one cfgattr value
+            	RECENT_LIMIT = 60000,        // max size of the "recent changes" text
+            	MEMBER_LIST_LIMIT = 700,     // group member lists longer than this are stored as count+hash
+            	LOG_PAGE_ROWS = 500,
+            	LOG_IDS = ['0100044544', '0100044545', '0100044546', '0100044547'];
+
+            var params = JSON.parse(value),
+            	started = Date.now(),
+            	request = new HttpRequest(),
+            	errors = [],
+            	out = {
+            		ts: Math.floor(started / 1000),
+            		errors: '',
+            		tables: [],
+            		buckets: [],
+            		fp: {},
+            		count: {}
+            	};
+
+            /* ---------- small helpers ---------- */
+
+            function isMacro(v) {
+            	return typeof v !== 'string' || v === '' || v.indexOf('{' + '$') === 0;
+            }
+
+            function param(name, dflt) {
+            	var v = params[name];
+            	return isMacro(v) ? dflt : String(v).trim();
+            }
+
+            function esc(s) {
+            	return String(s).replace(/%/g, '%25').replace(/\t/g, '%09').replace(/\n/g, '%0A')
+            		.replace(/\r/g, '%0D').replace(/@/g, '%40').replace(/,/g, '%2C');
+            }
+
+            function utf8len(s) {
+            	var n = 0, c, i;
+            	for (i = 0; i < s.length; i++) {
+            		c = s.charCodeAt(i);
+            		if (c < 0x80) n += 1;
+            		else if (c < 0x800) n += 2;
+            		else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; }
+            		else n += 3;
+            	}
+            	return n;
+            }
+
+            var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+            function sigChar(s) {
+            	return B64.charAt(parseInt(md5(s).substring(0, 2), 16) & 63);
+            }
+
+            function bucketHash(key) {
+            	return parseInt(md5(String(key)).substring(0, 7), 16);
+            }
+
+            function parseDuration(s, dflt) {
+            	var m = /^(\d+)\s*([smhdw]?)$/.exec(String(s).trim());
+            	if (!m) return dflt;
+            	return parseInt(m[1], 10) * ({ '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 })[m[2]];
+            }
+
+            function regex(s, dflt) {
+            	try {
+            		return new RegExp(s);
+            	}
+            	catch (e) {
+            		errors.push('Invalid regular expression "' + s + '": ' + e);
+            		return dflt;
+            	}
+            }
+
+            function addError(msg) {
+            	errors.push(msg);
+            	Zabbix.log(3, '[ FortiGate config change ] ' + msg);
+            }
+
+            /* canonical JSON: sorted keys, sorted arrays (FortiOS reference lists are sets), no q_* meta keys */
+            function canon(v) {
+            	var i, keys, parts;
+            	if (v === null || typeof v !== 'object') return JSON.stringify(v);
+            	if (Array.isArray(v)) {
+            		parts = [];
+            		for (i = 0; i < v.length; i++) parts.push(canon(v[i]));
+            		parts.sort();
+            		return '[' + parts.join(',') + ']';
+            	}
+            	keys = Object.keys(v).sort();
+            	parts = [];
+            	for (i = 0; i < keys.length; i++) {
+            		if (keys[i].indexOf('q_') === 0) continue;
+            		parts.push(JSON.stringify(keys[i]) + ':' + canon(v[keys[i]]));
+            	}
+            	return '{' + parts.join(',') + '}';
+            }
+
+            /* ---------- table registry ---------- */
+
+            var POLICY_GROUPS = [
+            	['name', /^name$/],
+            	['status', /^status$/],
+            	['action', /^(action|send-deny-packet)$/],
+            	['srcintf', /^srcintf$/],
+            	['dstintf', /^dstintf$/],
+            	['source', /^(srcaddr|internet-service6?-src|src-vendor-mac|network-service-src|ztna-ems-tag)/],
+            	['destination', /^(dstaddr|internet-service|network-service-dynamic|ztna-geo-tag)/],
+            	['service', /^service/],
+            	['schedule', /^schedule/],
+            	['users', /^(users|groups|fsso-groups)$/],
+            	['nat', /^(nat|ippool|poolname|natip|fixedport|permit-any-host|permit-stun-host|port-preserve|pcp-)/],
+            	['profiles', /(-profile|-sensor|-list|^utm-status$|^profile-|^inspection-mode$|^webproxy-|^casb-|^virtual-patch)/],
+            	['logging', /^(logtraffic|log-|custom-log-fields|capture-packet)/],
+            	['comments', /^comments?$/]
+            ];
+            var ADDRESS_GROUPS = [
+            	['comment', /^comments?$/],
+            	['interface', /^(associated-interface|interface)$/],
+            	['appearance', /^(color|tagging)$/]
+            ];
+            var GROUP_GROUPS = [
+            	['members', /^member$/],
+            	['exclude', /^(exclude|exclude-member)$/],
+            	['comment', /^comments?$/],
+            	['appearance', /^(color|tagging)$/]
+            ];
+            var SERVICE_GROUPS = [
+            	['ports', /^(protocol|protocol-number|tcp-portrange|udp-portrange|sctp-portrange|icmptype|icmpcode|iprange|fqdn|proxy|helper)$/],
+            	['category', /^category$/],
+            	['comment', /^comments?$/],
+            	['appearance', /^(color|tagging)$/]
+            ];
+            var GENERIC_GROUPS = [
+            	['comment', /^comments?$/],
+            	['appearance', /^(color|tagging)$/]
+            ];
+
+            var KNOWN = {
+            	'firewall/policy':                 ['Firewall policy', 'policy'],
+            	'firewall/security-policy':        ['Security policy', 'policy'],
+            	'firewall/proxy-policy':           ['Proxy policy', 'policy'],
+            	'firewall/local-in-policy':        ['Local-in policy', 'policy'],
+            	'firewall/local-in-policy6':       ['Local-in policy (IPv6)', 'policy'],
+            	'firewall/multicast-policy':       ['Multicast policy', 'policy'],
+            	'firewall/central-snat-map':       ['Central SNAT', 'policy'],
+            	'firewall/DoS-policy':             ['DoS policy', 'policy'],
+            	'firewall/shaping-policy':         ['Shaping policy', 'policy'],
+            	'firewall/address':                ['Address', 'address'],
+            	'firewall/address6':               ['Address (IPv6)', 'address'],
+            	'firewall/multicast-address':      ['Multicast address', 'address'],
+            	'firewall/addrgrp':                ['Address group', 'group'],
+            	'firewall/addrgrp6':               ['Address group (IPv6)', 'group'],
+            	'firewall.service/custom':         ['Service', 'service'],
+            	'firewall.service/group':          ['Service group', 'group'],
+            	'firewall/vip':                    ['Virtual IP', 'vip'],
+            	'firewall/vip6':                   ['Virtual IP (IPv6)', 'vip'],
+            	'firewall/vipgrp':                 ['Virtual IP group', 'group'],
+            	'firewall/vipgrp6':                ['Virtual IP group (IPv6)', 'group'],
+            	'firewall/ippool':                 ['IP pool', 'address'],
+            	'firewall/ippool6':                ['IP pool (IPv6)', 'address'],
+            	'firewall.schedule/recurring':     ['Schedule (recurring)', 'generic'],
+            	'firewall.schedule/onetime':       ['Schedule (one-time)', 'generic'],
+            	'firewall.schedule/group':         ['Schedule group', 'group'],
+            	'firewall/internet-service-custom':       ['Internet service (custom)', 'generic'],
+            	'firewall/internet-service-custom-group': ['Internet service group (custom)', 'group']
+            };
+
+            function tableDef(path) {
+            	var k = KNOWN[path], kind = k ? k[1] : (/polic|snat-map/.test(path) ? 'policy' : 'generic'),
+            		groups = ({ policy: POLICY_GROUPS, address: ADDRESS_GROUPS, vip: ADDRESS_GROUPS, group: GROUP_GROUPS,
+            			service: SERVICE_GROUPS, generic: GENERIC_GROUPS })[kind],
+            		rest = ({ policy: 'other', address: 'value', vip: 'mapping', group: 'other', service: 'other',
+            			generic: 'config' })[kind],
+            		labels = [], i;
+
+            	for (i = 0; i < groups.length; i++) labels.push(groups[i][0]);
+            	labels.push(rest);
+
+            	return {
+            		path: path,
+            		id: path.replace(/\//g, '.'),           // matches cfgpath in FortiGate config-change logs
+            		name: k ? k[0] : path,
+            		kind: kind,
+            		ordered: kind === 'policy',
+            		groups: groups,
+            		labels: labels
+            	};
+            }
+
+            /* ---------- FortiGate API ---------- */
+
+            var apiBase;
+
+            function api(path, query) {
+            	var url = apiBase + path + (query ? '?' + query : ''), body, status, json = null, msg;
+
+            	try {
+            		body = request.get(url);
+            	}
+            	catch (e) {
+            		throw 'request to ' + path + ' failed: ' + e;
+            	}
+            	status = request.getStatus();
+            	Zabbix.log(5, '[ FortiGate config change ] GET ' + path + ' -> ' + status);
+
+            	if (body !== null && body !== '') {
+            		try {
+            			json = JSON.parse(body);
+            		}
+            		catch (e) {
+            			json = null;
+            		}
+            	}
+            	if (status !== 200) {
+            		msg = path + ' returned HTTP ' + status;
+            		if (status === 401) msg += ' (check {' + '$FGATE.API.TOKEN} and the trusted hosts of the API admin)';
+            		if (status === 403) msg += ' (the API admin profile is missing read permission or VDOM access)';
+            		throw msg;
+            	}
+            	if (json === null || typeof json !== 'object') throw path + ' returned a response that is not JSON';
+            	if (typeof json.status !== 'undefined' && json.status !== 'success') {
+            		throw path + ' returned status "' + json.status + '"' +
+            			(typeof json.error !== 'undefined' ? ' (error ' + json.error + ')' : '');
+            	}
+            	return json;
+            }
+
+            /* ---------- configuration ---------- */
+
+            var fwVersion = '', ignore = {}, objectExclude, tables = [], vdoms = [];
+
+            function init() {
+            	var scheme = param('scheme', 'https'), fqdn = param('fqdn', ''), port = param('port', '443'),
+            		token = param('token', ''), proxy = param('http_proxy', ''), list, i;
+
+            	if (fqdn === '') throw 'Set the {' + '$FGATE.API.FQDN} macro (provided by the FortiGate by HTTP template or the host).';
+            	if (token === '') throw 'Set the {' + '$FGATE.API.TOKEN} macro (provided by the FortiGate by HTTP template or the host).';
+
+            	if (proxy !== '') request.setProxy(proxy);
+            	request.addHeader('Accept: application/json');
+            	request.addHeader('Authorization: Bearer ' + token);
+            	apiBase = scheme + '://' + fqdn + ':' + port;
+
+            	list = param('ignore_attrs', '').split(',');
+            	for (i = 0; i < list.length; i++) {
+            		if (list[i].trim() !== '') ignore[list[i].trim()] = true;
+            	}
+            	objectExclude = regex(param('object_not_matches', ''), null);
+            	if (param('object_not_matches', '') === '') objectExclude = null;
+
+            	/* the comparison needs the previous snapshot: warn about settings that make it impossible */
+            	var interval = parseDuration(param('interval', '1h'), 0), keep = parseDuration(param('snapshot_history', '1d'), 0);
+            	if (interval > 0 && keep > 0 && keep < 2 * interval) {
+            		errors.push('{' + '$FGATE.CHG.SNAPSHOT.HISTORY} must be at least twice {' + '$FGATE.CHG.INTERVAL}, otherwise changes cannot be compared.');
+            	}
+            	if (interval > 0 && parseDuration(param('log_lookback', '24h'), 86400) < interval) {
+            		errors.push('{' + '$FGATE.CHG.LOG.LOOKBACK} is shorter than {' + '$FGATE.CHG.INTERVAL}: some config-change log entries will be missed.');
+            	}
+
+            	list = param('tables', 'firewall/policy').split(',');
+            	for (i = 0; i < list.length; i++) {
+            		var p = list[i].trim().replace(/^\/+|\/+$/g, '').replace(/^api\/v2\/cmdb\//, '');
+            		if (p !== '') tables.push(tableDef(p));
+            	}
+            }
+
+            function loadVdoms() {
+            	var spec = param('vdoms', '*'), inc = regex(param('vdom_matches', '.*'), /.*/),
+            		exc = regex(param('vdom_not_matches', '^vsys_'), /^vsys_/), names = [], res, i;
+
+            	if (spec === '*') {
+            		try {
+            			res = api('/api/v2/cmdb/system/vdom', 'format=name').results || [];
+            			for (i = 0; i < res.length; i++) {
+            				if (res[i] && typeof res[i].name === 'string') names.push(res[i].name);
+            			}
+            		}
+            		catch (e) {
+            			addError('Cannot list VDOMs (' + e + '); using "root". Set {' + '$FGATE.CHG.VDOMS} to the VDOM names to monitor.');
+            		}
+            		if (names.length === 0) names = ['root'];
+            	}
+            	else {
+            		names = spec.split(',');
+            	}
+            	for (i = 0; i < names.length; i++) {
+            		var n = names[i].trim();
+            		if (n !== '' && inc.test(n) && !exc.test(n) && vdoms.indexOf(n) === -1) vdoms.push(n);
+            	}
+            	if (vdoms.length === 0) throw 'No VDOM left to monitor after applying {' + '$FGATE.CHG.VDOM.MATCHES} / {' + '$FGATE.CHG.VDOM.NOT_MATCHES}.';
+            }
+
+            /* ---------- config-change log ---------- */
+
+            var log = { status: 2, source: 'none', message: 'disabled by {' + '$FGATE.CHG.LOG.SOURCE}', entries: 0 },
+            	logByTable = {},     // "vdom|tableid" -> [entry]
+            	recent = [];
+
+            function logEpoch(e) {
+            	var t = Number(e.eventtime), m;
+            	if (!(t > 0) && e._metadata) t = Number(e._metadata.timestamp);
+            	if (t > 1e17) t = t / 1e9;
+            	else if (t > 1e14) t = t / 1e6;
+            	else if (t > 1e11) t = t / 1e3;
+            	if (!(t > 0) && typeof e.date === 'string' && typeof e.time === 'string') {
+            		m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(e.date);
+            		var tm = /^(\d\d):(\d\d):(\d\d)$/.exec(e.time);
+            		if (m && tm) {
+            			t = Date.UTC(+m[1], +m[2] - 1, +m[3], +tm[1], +tm[2], +tm[3]) / 1000 - tzMinutes(e.tz) * 60;
+            		}
+            	}
+            	return t > 0 ? Math.floor(t) : 0;
+            }
+
+            function tzMinutes(tz) {
+            	var m = /^([+-])(\d\d):?(\d\d)$/.exec(String(tz || ''));
+            	return m ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) : 0;
+            }
+
+            function logQuery(device, vdom, sinceMs, maxRows, withFilters) {
+            	var path = '/api/v2/log/' + device + '/event/system', rows = [], start = 0, page, r, q, waited, sid;
+
+            	while (rows.length < maxRows) {
+            		page = Math.min(LOG_PAGE_ROWS, maxRows - rows.length);
+            		q = 'vdom=' + encodeURIComponent(vdom) + '&start=' + start + '&rows=' + page;
+            		if (withFilters) {
+            			q += '&filter=' + encodeURIComponent('_metadata.timestamp>=' + sinceMs) +
+            				'&filter=' + encodeURIComponent('logid==' + LOG_IDS.join(',logid=='));
+            		}
+            		r = api(path, q);
+            		/* FortiAnalyzer / FortiGate Cloud searches run asynchronously: poll with the session id */
+            		waited = 0;
+            		while (typeof r.session_id !== 'undefined' && typeof r.completed !== 'undefined' &&
+            				Number(r.completed) < 100 && waited < 20) {
+            			sid = r.session_id;
+            			Zabbix.sleep(1000);
+            			waited++;
+            			r = api(path, q + '&session_id=' + encodeURIComponent(sid));
+            		}
+            		if (!Array.isArray(r.results)) throw path + ' returned no results array';
+            		rows = rows.concat(r.results);
+            		if (r.results.length < page) break;
+            		start += r.results.length;
+            	}
+            	return rows;
+            }
+
+            function logDevices(spec) {
+            	var order = ['disk', 'memory', 'fortianalyzer', 'forticloud'],
+            		setting = { disk: 'log.disk/setting', memory: 'log.memory/setting',
+            			fortianalyzer: 'log.fortianalyzer/setting', forticloud: 'log.fortiguard/setting' },
+            		enabled = [], unknown = [], i, r, st;
+
+            	if (spec !== 'auto') return [spec];
+            	for (i = 0; i < order.length; i++) {
+            		try {
+            			r = api('/api/v2/cmdb/' + setting[order[i]], '');
+            			st = r.results;
+            			if (Array.isArray(st)) st = st[0];
+            			if (st && st.status === 'enable') enabled.push(order[i]);
+            		}
+            		catch (e) {
+            			if (order[i] === 'disk' || order[i] === 'memory') unknown.push(order[i]);
+            		}
+            	}
+            	return enabled.concat(unknown).length > 0 ? enabled.concat(unknown) : ['memory', 'disk'];
+            }
+
+            function loadLogs() {
+            	var spec = param('log_source', 'auto').toLowerCase(), lookback = parseDuration(param('log_lookback', '24h'), 86400),
+            		maxRows = parseInt(param('log_maxrows', '1000'), 10) || 1000, since = out.ts - lookback,
+            		devices, d, v, rows, used = null, lastErr = '', i, k, e, ids = {}, paths = {}, t;
+
+            	if (spec === 'none' || spec === 'off' || spec === '0') return;
+            	if (['auto', 'disk', 'memory', 'fortianalyzer', 'forticloud'].indexOf(spec) === -1) {
+            		log = { status: 0, source: spec, message: 'unknown log source "' + spec + '"', entries: 0 };
+            		return;
+            	}
+            	for (i = 0; i < LOG_IDS.length; i++) ids[LOG_IDS[i]] = true;
+            	for (i = 0; i < tables.length; i++) paths[tables[i].id] = tables[i];
+
+            	devices = logDevices(spec);
+            	log = { status: 0, source: devices.join('/'), message: '', entries: 0 };
+
+            	var seen = {}, failed = [];
+            	for (v = 0; v < vdoms.length; v++) {
+            		rows = null;
+            		for (d = 0; d < devices.length && rows === null; d++) {
+            			if (used !== null && devices[d] !== used) continue;
+            			try {
+            				rows = logQuery(devices[d], vdoms[v], since * 1000, maxRows, true);
+            			}
+            			catch (e1) {
+            				try {
+            					/* older builds may reject the filters: fetch the newest rows and filter here */
+            					rows = logQuery(devices[d], vdoms[v], since * 1000, maxRows, false);
+            				}
+            				catch (e2) {
+            					lastErr = String(e2);
+            					rows = null;
+            				}
+            			}
+            			if (rows !== null) used = devices[d];
+            		}
+            		if (rows === null) {
+            			failed.push(vdoms[v]);
+            			continue;
+            		}
+            		for (i = 0; i < rows.length; i++) {
+            			e = rows[i];
+            			if (!e || typeof e !== 'object') continue;
+            			if (typeof e.logid !== 'undefined' && !ids[String(e.logid)] &&
+            					!ids['0' + String(e.logid)] && !ids[('000' + String(e.logid)).slice(-10)]) continue;
+            			if (typeof e.cfgpath !== 'string' || !paths[e.cfgpath]) continue;
+            			/* some units log VDOM changes in the management VDOM: attribute entries by their "vd" field */
+            			var vd = typeof e.vd === 'string' && e.vd !== '' ? e.vd : vdoms[v];
+            			if (vdoms.indexOf(vd) === -1) continue;
+            			t = logEpoch(e);
+            			if (t !== 0 && t < since) continue;
+            			k = [e.eventtime, e.cfgtid, vd, e.cfgpath, e.cfgobj, e.action, e.cfgattr].join('|');
+            			if (seen[k]) continue;
+            			seen[k] = true;
+            			var entry = {
+            				time: t,
+            				tz: typeof e.tz === 'string' ? e.tz : '',
+            				vdom: vd,
+            				path: e.cfgpath,
+            				key: typeof e.cfgobj === 'undefined' ? '' : String(e.cfgobj),
+            				action: String(e.action || e.logdesc || ''),
+            				user: String(e.user || ''),
+            				ui: String(e.ui || ''),
+            				attr: String(typeof e.cfgattr === 'undefined' ? '' : e.cfgattr).substring(0, LOG_ATTR_LIMIT)
+            			};
+            			k = vd + '|' + e.cfgpath;
+            			if (!logByTable[k]) logByTable[k] = [];
+            			logByTable[k].push(entry);
+            			recent.push(entry);
+            		}
+            	}
+            	recent.sort(function (a, b) { return b.time - a.time; });
+            	log = { status: failed.length ? 0 : 1, source: used || devices.join('/'), entries: recent.length,
+            		message: failed.length ? 'cannot read the system event log' + (vdoms.length > 1 ? ' of VDOM ' + failed.join(', ') : '') +
+            			': ' + lastErr : 'ok' };
+            }
+
+            function fmtTime(t, tz) {
+            	var off = tz ? tzMinutes(tz) : -new Date(t * 1000).getTimezoneOffset(),
+            		d = new Date((t + off * 60) * 1000);
+            	function p(n) { return (n < 10 ? '0' : '') + n; }
+            	return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' +
+            		p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()) +
+            		(tz ? ' ' + tz : '');
+            }
+
+            function recentText() {
+            	var lines = [], size = 0, i, e, line;
+            	for (i = 0; i < recent.length; i++) {
+            		e = recent[i];
+            		line = fmtTime(e.time, e.tz) + ' [' + e.vdom + '] ' + e.path + (e.key !== '' ? ' ' + e.key : '') + ': ' +
+            			e.action + ' by ' + (e.user || '?') + (e.ui ? ' via ' + e.ui : '') + (e.attr ? ' - ' + e.attr : '');
+            		size += utf8len(line) + 1;
+            		if (size > RECENT_LIMIT) {
+            			lines.push('... ' + (recent.length - i) + ' older entries not shown');
+            			break;
+            		}
+            		lines.push(line);
+            	}
+            	return lines.join('\n');
+            }
+
+            /* ---------- fingerprints ---------- */
+
+            function objectKey(o) {
+            	if (typeof o.q_origin_key !== 'undefined') return String(o.q_origin_key);
+            	if (typeof o.policyid !== 'undefined') return String(o.policyid);
+            	if (typeof o.name !== 'undefined') return String(o.name);
+            	if (typeof o.id !== 'undefined') return String(o.id);
+            	return null;
+            }
+
+            function memberExtra(o) {
+            	var m = o.member, names = [], i, s;
+            	if (!Array.isArray(m)) return '';
+            	for (i = 0; i < m.length; i++) {
+            		names.push(esc(m[i] && typeof m[i] === 'object' ? (m[i].name !== undefined ? m[i].name : objectKey(m[i])) : m[i]));
+            	}
+            	names.sort();
+            	s = names.join(',');
+            	return s.length <= MEMBER_LIST_LIMIT ? s : '#' + names.length + ':' + md5(s).substring(0, 8);
+            }
+
+            function fingerprint(def, o) {
+            	var keys = Object.keys(o).sort(), all = [], parts = [], g, i, k, s, sig = '';
+
+            	for (g = 0; g < def.labels.length; g++) parts.push([]);
+            	for (i = 0; i < keys.length; i++) {
+            		k = keys[i];
+            		if (k.indexOf('q_') === 0 || ignore[k]) continue;
+            		s = JSON.stringify(k) + ':' + canon(o[k]);
+            		all.push(s);
+            		for (g = 0; g < def.groups.length; g++) {
+            			if (def.groups[g][1].test(k)) break;
+            		}
+            		parts[g].push(s);
+            	}
+            	for (g = 0; g < parts.length; g++) sig += sigChar(parts[g].join(','));
+            	return { hash: md5(all.join(',')).substring(0, 10), sig: sig };
+            }
+
+            function collectTable(vdom, def) {
+            	var r = api('/api/v2/cmdb/' + def.path, 'vdom=' + encodeURIComponent(vdom) + '&exclude-default-values=1&skip=1'),
+            		res = r.results, entries = [], seen = {}, i, o, key, fp, line, label;
+
+            	if (!Array.isArray(res)) throw def.path + ' did not return a table (check the path in {' + '$FGATE.CHG.TABLES})';
+            	if (typeof r.version === 'string' && fwVersion === '') fwVersion = r.version + (r.build ? ' build' + r.build : '');
+
+            	for (i = 0; i < res.length; i++) {
+            		o = res[i];
+            		if (!o || typeof o !== 'object') continue;
+            		key = objectKey(o);
+            		if (key === null || seen[key]) continue;
+            		if (objectExclude !== null && objectExclude.test(def.id + ':' + key)) continue;
+            		seen[key] = true;
+            		fp = fingerprint(def, o);
+            		label = def.kind === 'policy' && typeof o.name === 'string' ? o.name : '';
+            		line = esc(key) + '\t' + fp.hash + '\t' + fp.sig + '\t' + esc(label) + '\t' +
+            			(def.kind === 'group' ? memberExtra(o) : '');
+            		entries.push({ key: key, line: line, size: utf8len(line) + 1, bh: bucketHash(key) });
+            	}
+            	return entries;
+            }
+
+            function logLine(e) {
+            	return 'L\t' + e.time + '\t' + esc(e.tz) + '\t' + esc(e.key) + '\t' + esc(e.action) + '\t' +
+            		esc(e.user) + '\t' + esc(e.ui) + '\t' + esc(e.attr);
+            }
+
+            function packTable(vdom, def, entries, cfgsig) {
+            	var logs = (logByTable[vdom + '|' + def.id] || []).slice(0), n = 1, buckets, i, b, size, ok,
+            		tableHash, header, text;
+
+            	logs.sort(function (a, b2) { return b2.time - a.time; });
+            	for (i = 0; i < logs.length; i++) {
+            		logs[i].line = logLine(logs[i]);
+            		logs[i].size = utf8len(logs[i].line) + 1;
+            		logs[i].bh = bucketHash(logs[i].key);
+            	}
+            	tableHash = md5(entries.map(function (x) { return x.line; }).join('\n')).substring(0, 10);
+
+            	for (;;) {
+            		buckets = [];
+            		for (b = 0; b < n; b++) buckets.push({ lines: [], size: 300, logs: [], logSize: 0 });
+            		for (i = 0; i < entries.length; i++) {
+            			b = buckets[entries[i].bh & (n - 1)];
+            			b.lines.push(entries[i].line);
+            			b.size += entries[i].size;
+            		}
+            		for (i = 0; i < logs.length; i++) {
+            			b = buckets[logs[i].bh & (n - 1)];
+            			if (b.logSize + logs[i].size <= LOG_BUCKET_LIMIT) {
+            				b.logs.push(logs[i].line);
+            				b.logSize += logs[i].size;
+            			}
+            		}
+            		ok = true;
+            		for (b = 0; b < n; b++) {
+            			if (buckets[b].size + buckets[b].logSize > BUCKET_LIMIT) ok = false;
+            		}
+            		if (ok || n >= MAX_BUCKETS) break;
+            		n *= 2;
+            	}
+            	if (!ok) addError(def.name + ' [' + vdom + '] is too large for ' + MAX_BUCKETS + ' fingerprint buckets; some objects are not tracked.');
+
+            	for (b = 0; b < n; b++) {
+            		header = [FMT, out.ts, esc(vdom), esc(def.id), b + '/' + n, esc(fwVersion), cfgsig, entries.length,
+            			tableHash, def.ordered ? 1 : 0, def.labels.join(','), esc(def.name)].join('\t');
+            		text = header + '\n' + buckets[b].lines.join('\n') + '\n@LOG\n' + buckets[b].logs.join('\n');
+            		if (utf8len(text) > 65000) text = text.substring(0, 60000);   /* never exceed the Zabbix text limit */
+            		out.fp[vdom + '|' + def.id + '|' + b] = text;
+            		out.buckets.push({
+            			'{#VDOM}': vdom, '{#TABLE}': def.id, '{#TABLE.NAME}': def.name, '{#BUCKET}': String(b), '{#BUCKETS}': String(n),
+            			'{#PART}': n > 1 ? ' part ' + (b + 1) + '/' + n : ''
+            		});
+            	}
+            	out.tables.push({
+            		'{#VDOM}': vdom, '{#TABLE}': def.id, '{#TABLE.NAME}': def.name, '{#TABLE.PATH}': def.path, '{#BUCKETS}': String(n)
+            	});
+            	out.count[vdom + '|' + def.id] = entries.length;
+            }
+
+            /* ---------- main ---------- */
+
+            var okTables = 0, failedTables = 0, objects = 0;
+
+            try {
+            	init();
+            	loadVdoms();
+
+            	var collected = [], v, t, ignoreList = Object.keys(ignore).sort().join(','), cfgsig;
+            	cfgsig = md5(FMT + '|' + ignoreList + '|' + param('object_not_matches', '')).substring(0, 8);
+
+            	for (v = 0; v < vdoms.length; v++) {
+            		for (t = 0; t < tables.length; t++) {
+            			try {
+            				collected.push({ vdom: vdoms[v], def: tables[t], entries: collectTable(vdoms[v], tables[t]) });
+            				okTables++;
+            			}
+            			catch (e) {
+            				failedTables++;
+            				addError(tables[t].name + ' [' + vdoms[v] + ']: ' + e);
+            			}
+            		}
+            	}
+
+            	if (okTables > 0) {
+            		try {
+            			loadLogs();
+            		}
+            		catch (e) {
+            			log = { status: 0, source: log.source, message: String(e), entries: 0 };
+            			logByTable = {};
+            			recent = [];
+            		}
+            		for (v = 0; v < collected.length; v++) {
+            			packTable(collected[v].vdom, collected[v].def, collected[v].entries, cfgsig);
+            			objects += collected[v].entries.length;
+            		}
+            	}
+            }
+            catch (e) {
+            	addError(String(e));
+            }
+
+            if (okTables > 0) {
+            	out.lastok = out.ts;
+            	out.objects = objects;
+            	out.recent = recentText();
+            }
+            else {
+            	delete out.tables;
+            	delete out.buckets;
+            }
+            out.ok_tables = okTables;
+            out.failed_tables = failedTables;
+            out.fwversion = fwVersion;
+            log.info = log.status === 2 ? 'disabled' : log.source + ': ' + log.message +
+            	(log.status === 1 ? ' (' + log.entries + ' change entries in the last ' + param('log_lookback', '24h') + ')' : '');
+            out.log = log;
+            out.vdoms = vdoms.join(',');
+            out.errors = errors.join('\n');
+            out.duration = Math.round((Date.now() - started) / 100) / 10;
+
+            return JSON.stringify(out);
+          description: Reads the monitored firewall tables of every monitored VDOM and the config-change log from the FortiOS REST API and returns the fingerprint snapshot used by the change items.
+          timeout: '{$FGATE.CHG.TIMEOUT}'
+          parameters:
+            - name: fqdn
+              value: '{$FGATE.API.FQDN}'
+            - name: http_proxy
+              value: '{$FGATE.HTTP.PROXY}'
+            - name: ignore_attrs
+              value: '{$FGATE.CHG.IGNORE.ATTRS}'
+            - name: interval
+              value: '{$FGATE.CHG.INTERVAL}'
+            - name: log_lookback
+              value: '{$FGATE.CHG.LOG.LOOKBACK}'
+            - name: log_maxrows
+              value: '{$FGATE.CHG.LOG.MAXROWS}'
+            - name: log_source
+              value: '{$FGATE.CHG.LOG.SOURCE}'
+            - name: object_not_matches
+              value: '{$FGATE.CHG.OBJECT.NOT_MATCHES}'
+            - name: port
+              value: '{$FGATE.API.PORT}'
+            - name: scheme
+              value: '{$FGATE.SCHEME}'
+            - name: snapshot_history
+              value: '{$FGATE.CHG.SNAPSHOT.HISTORY}'
+            - name: tables
+              value: '{$FGATE.CHG.TABLES}'
+            - name: token
+              value: '{$FGATE.API.TOKEN}'
+            - name: vdom_matches
+              value: '{$FGATE.CHG.VDOM.MATCHES}'
+            - name: vdom_not_matches
+              value: '{$FGATE.CHG.VDOM.NOT_MATCHES}'
+            - name: vdoms
+              value: '{$FGATE.CHG.VDOMS}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: '945b117d17284074b70eb0e9bc06e290'
+          name: 'Change tracking: Last successful collection'
+          type: DEPENDENT
+          key: fgate.chg.lastcheck
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          trends: '0'
+          units: unixtime
+          description: Time of the last collection in which at least one table was read.
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.lastok'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+          triggers:
+            - uuid: a6c4d84ac44d4d6a8ea09037b8eda1bc
+              expression: 'nodata(/FortiGate Extended Rule and Object Changes by HTTP/fgate.chg.lastcheck,{$FGATE.CHG.NODATA})=1'
+              name: 'Rule and object change data not collected for {$FGATE.CHG.NODATA}'
+              priority: WARNING
+              description: 'No configuration snapshot was collected for {$FGATE.CHG.NODATA}, so rule and object changes are not detected. Check the item "Change tracking: Get snapshot" (state, timeout) and "Change tracking: Collector errors".'
+              tags:
+                - tag: component
+                  value: config-collector
+                - tag: scope
+                  value: availability
+        - uuid: a097327acddc4baaa23e09d6168c4973
+          name: 'Change tracking: Collector errors'
+          type: DEPENDENT
+          key: fgate.chg.errors
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          value_type: TEXT
+          trends: '0'
+          description: 'Errors of the last collection (empty when everything was read).'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '{"errors":"The item \"Change tracking: Get snapshot\" is not supported (script error or timeout). See its error in Latest data."}'
+            - type: JSONPATH
+              parameters:
+                - '$.errors'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '1d'
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+          triggers:
+            - uuid: '572802b00a294f30a661299be32a19ae'
+              expression: 'length(last(/FortiGate Extended Rule and Object Changes by HTTP/fgate.chg.errors))>0'
+              name: Rule and object change collector reports errors
+              event_name: 'Rule and object change collector reports errors: {ITEM.VALUE}'
+              priority: WARNING
+              description: 'The last collection could not read everything. Tables that failed keep their previous snapshot and are compared again when they can be read. See the item "Change tracking: Collector errors".'
+              tags:
+                - tag: component
+                  value: config-collector
+                - tag: scope
+                  value: availability
+        - uuid: '50e7984d766c48449ff0e8a4b8c5339e'
+          name: 'Change tracking: Monitored objects'
+          type: DEPENDENT
+          key: fgate.chg.objects
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          description: Number of objects in all monitored tables and VDOMs.
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.objects'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+        - uuid: fcfd3f69b9ed431ba6fe7c0e333cf91a
+          name: 'Change tracking: Collection duration'
+          type: DEPENDENT
+          key: fgate.chg.duration
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          value_type: FLOAT
+          units: s
+          description: 'How long the last collection took. Increase {$FGATE.CHG.TIMEOUT} if it gets close.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.duration'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+        - uuid: '11fbe1206fc74e13a489f8e33f10e4e4'
+          name: 'Change tracking: Monitored VDOMs'
+          type: DEPENDENT
+          key: fgate.chg.vdoms
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          value_type: CHAR
+          trends: '0'
+          description: VDOMs tracked in the last collection.
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.vdoms'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '1d'
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+        - uuid: '4dc92dc0077942e38a092f8eaf3d621f'
+          name: 'Change tracking: Config-change log status'
+          type: DEPENDENT
+          key: fgate.chg.log.status
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          trends: '0'
+          description: 'Whether the FortiGate config-change log could be read (adds who/when to the change reports).'
+          valuemap:
+            name: FortiGate config-change log status
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.log.status'
+              error_handler: DISCARD_VALUE
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+        - uuid: fcf1b2631aed42e19d9453d743b22635
+          name: 'Change tracking: Config-change log source'
+          type: DEPENDENT
+          key: fgate.chg.log.info
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          value_type: CHAR
+          trends: '0'
+          description: Log device used for the config-change log and the result of the last read.
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.log.info'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '1d'
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-collector
+        - uuid: d7d5a65a60fe4098a3f86f35d063efcd
+          name: 'Change tracking: Recent config changes (FortiGate log)'
+          type: DEPENDENT
+          key: fgate.chg.recent
+          delay: '0'
+          history: '{$FGATE.CHG.HISTORY}'
+          value_type: TEXT
+          trends: '0'
+          description: 'Config-change log entries for the monitored tables in the last {$FGATE.CHG.LOG.LOOKBACK}, newest first.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: DISCARD_VALUE
+            - type: JSONPATH
+              parameters:
+                - '$.recent'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - '1d'
+          master_item:
+            key: fgate.chg.get
+          tags:
+            - tag: component
+              value: config-change
+      discovery_rules:
+        - uuid: '9e11503fbd2844fdac1e1fb84313649d'
+          name: 'Change tracking: Table discovery'
+          type: DEPENDENT
+          key: fgate.chg.tables.discovery
+          delay: '0'
+          lifetime: '7d'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: One entry per monitored table and VDOM.
+          item_prototypes:
+            - uuid: f828b23754444e4b9d785b33a6a3db22
+              name: '{#TABLE.NAME} [{#VDOM}]: Number of objects'
+              type: DEPENDENT
+              key: 'fgate.chg.count[{#VDOM},{#TABLE}]'
+              delay: '0'
+              history: '{$FGATE.CHG.HISTORY}'
+              description: Number of objects in the table.
+              preprocessing:
+                - type: CHECK_NOT_SUPPORTED
+                  parameters:
+                    - '-1'
+                  error_handler: DISCARD_VALUE
+                - type: JSONPATH
+                  parameters:
+                    - '$.count["{#VDOM}|{#TABLE}"]'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fgate.chg.get
+              tags:
+                - tag: component
+                  value: config-change
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+          master_item:
+            key: fgate.chg.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.tables'
+              error_handler: DISCARD_VALUE
+        - uuid: '8bf079c54cd14115967f9b2dcf5cae71'
+          name: 'Change tracking: Change detection discovery'
+          type: DEPENDENT
+          key: fgate.chg.buckets.discovery
+          delay: '0'
+          lifetime: '7d'
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'One entry per monitored table, VDOM and snapshot part (big tables are split into parts).'
+          item_prototypes:
+            - uuid: '0fc9496fd964426992213049357b7788'
+              name: '{#TABLE.NAME} [{#VDOM}]{#PART}: Snapshot'
+              type: DEPENDENT
+              key: 'fgate.chg.fp[{#VDOM},{#TABLE},{#BUCKET}]'
+              delay: '0'
+              history: '{$FGATE.CHG.SNAPSHOT.HISTORY}'
+              value_type: TEXT
+              trends: '0'
+              description: 'Fingerprint snapshot of the table (object keys, hashes, group members and recent config-change log entries). Used by the comparison item.'
+              preprocessing:
+                - type: CHECK_NOT_SUPPORTED
+                  parameters:
+                    - '-1'
+                  error_handler: DISCARD_VALUE
+                - type: JSONPATH
+                  parameters:
+                    - '$.fp["{#VDOM}|{#TABLE}|{#BUCKET}"]'
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: fgate.chg.get
+              tags:
+                - tag: component
+                  value: raw
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+            - uuid: '50efd4c9a9ac4f269db4822866d460df'
+              name: '{#TABLE.NAME} [{#VDOM}]{#PART}: Comparison'
+              type: CALCULATED
+              key: 'fgate.chg.diff[{#VDOM},{#TABLE},{#BUCKET}]'
+              delay: '{$FGATE.CHG.DIFF.INTERVAL}'
+              history: '{$FGATE.CHG.SNAPSHOT.HISTORY}'
+              value_type: TEXT
+              trends: '0'
+              params: 'concat(last(//fgate.chg.fp[{#VDOM},{#TABLE},{#BUCKET}],#2),"@@FGCHG@@",last(//fgate.chg.fp[{#VDOM},{#TABLE},{#BUCKET}],#1))'
+              description: 'Compares the two latest snapshots (JSON result). Until two snapshots exist the result is a baseline.'
+              preprocessing:
+                - type: CHECK_NOT_SUPPORTED
+                  parameters:
+                    - '-1'
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: 'FGCHG:INIT'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      /*
+                       * FortiGate rule & object change detection: compares the previous and the latest
+                       * fingerprint snapshot of one table bucket (input: "<previous>@@FGCHG@@<latest>") and
+                       * returns the changes as JSON {state, n, added, deleted, modified, moved, from, to,
+                       * summary, detail}. The output only depends on the two snapshots, so re-evaluating the
+                       * same pair gives the same value (discarded by "Discard unchanged").
+                       */
+                      var SEP = '@@FGCHG@@',
+                      	SUMMARY_MAX = 300,
+                      	SUMMARY_ITEMS = 4,
+                      	DETAIL_MAX = 60000,
+                      	LOG_TOLERANCE = 120,
+                      	LOG_PER_OBJECT = 5,
+                      	MEMBERS_SHOWN = 6;
+
+                      function unesc(s) {
+                      	try {
+                      		return decodeURIComponent(s);
+                      	}
+                      	catch (e) {
+                      		return s;
+                      	}
+                      }
+
+                      function parse(t) {
+                      	var lines = t.split('\n'), h = lines[0].split('\t'), fp, i, f, mode = 'E', key;
+
+                      	if (h[0] !== 'FGCHG1' || h.length < 11) return null;
+                      	fp = {
+                      		ts: parseInt(h[1], 10), vdom: unesc(h[2]), table: unesc(h[3]), bucket: h[4], fw: unesc(h[5]),
+                      		cfgsig: h[6], count: parseInt(h[7], 10), ordered: h[9] === '1', labels: h[10].split(','),
+                      		name: h.length > 11 ? unesc(h[11]) : unesc(h[3]), order: [], map: {}, logs: []
+                      	};
+                      	for (i = 1; i < lines.length; i++) {
+                      		if (lines[i] === '@LOG') {
+                      			mode = 'L';
+                      			continue;
+                      		}
+                      		if (lines[i] === '') continue;
+                      		f = lines[i].split('\t');
+                      		if (mode === 'E') {
+                      			if (f.length < 3) continue;
+                      			key = unesc(f[0]);
+                      			if (fp.map.hasOwnProperty('#' + key)) continue;
+                      			fp.map['#' + key] = { key: key, hash: f[1], sig: f[2], label: unesc(f[3] || ''), extra: f[4] || '' };
+                      			fp.order.push(key);
+                      		}
+                      		else if (f[0] === 'L' && f.length >= 8) {
+                      			fp.logs.push({ time: parseInt(f[1], 10), tz: unesc(f[2]), key: unesc(f[3]), action: unesc(f[4]),
+                      				user: unesc(f[5]), ui: unesc(f[6]), attr: unesc(f[7]) });
+                      		}
+                      	}
+                      	return fp;
+                      }
+
+                      function pad(n) {
+                      	return (n < 10 ? '0' : '') + n;
+                      }
+
+                      function tzMinutes(tz) {
+                      	var m = /^([+-])(\d\d):?(\d\d)$/.exec(String(tz || ''));
+                      	return m ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10)) : null;
+                      }
+
+                      /* local time of the FortiGate when the log carries a time zone, otherwise Zabbix server time */
+                      function fmt(t, tz, short) {
+                      	var off = tzMinutes(tz), d;
+                      	if (off === null) off = -new Date(t * 1000).getTimezoneOffset();
+                      	d = new Date((t + off * 60) * 1000);
+                      	if (short) return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+                      	return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()) + ' ' +
+                      		pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+                      }
+
+                      /* positions (indexes into seq) of one longest increasing subsequence */
+                      function lis(seq) {
+                      	var tails = [], prev = [], i, lo, hi, mid, out = [], k;
+                      	for (i = 0; i < seq.length; i++) {
+                      		lo = 0;
+                      		hi = tails.length;
+                      		while (lo < hi) {
+                      			mid = (lo + hi) >> 1;
+                      			if (seq[tails[mid]] < seq[i]) lo = mid + 1;
+                      			else hi = mid;
+                      		}
+                      		prev[i] = lo > 0 ? tails[lo - 1] : -1;
+                      		tails[lo] = i;
+                      	}
+                      	k = tails.length ? tails[tails.length - 1] : -1;
+                      	while (k >= 0) {
+                      		out.push(k);
+                      		k = prev[k];
+                      	}
+                      	return out;
+                      }
+
+                      function members(extra) {
+                      	var r = {}, list, i;
+                      	if (extra === '' ) return r;
+                      	list = extra.split(',');
+                      	for (i = 0; i < list.length; i++) r['#' + unesc(list[i])] = true;
+                      	return r;
+                      }
+
+                      function memberDiff(a, b) {
+                      	var ma, mb, plus = [], minus = [], k;
+                      	if (a === b) return '';
+                      	if (a.charAt(0) === '#' || b.charAt(0) === '#') {
+                      		return 'members ' + (a.charAt(0) === '#' ? a.split(':')[0].substring(1) : (a === '' ? 0 : a.split(',').length)) +
+                      			' -> ' + (b.charAt(0) === '#' ? b.split(':')[0].substring(1) : (b === '' ? 0 : b.split(',').length));
+                      	}
+                      	ma = members(a);
+                      	mb = members(b);
+                      	for (k in mb) if (mb.hasOwnProperty(k) && !ma.hasOwnProperty(k)) plus.push(k.substring(1));
+                      	for (k in ma) if (ma.hasOwnProperty(k) && !mb.hasOwnProperty(k)) minus.push(k.substring(1));
+                      	plus.sort();
+                      	minus.sort();
+                      	if (plus.length + minus.length > MEMBERS_SHOWN) {
+                      		return 'members +' + plus.length + ' -' + minus.length;
+                      	}
+                      	return 'members' + (plus.length ? ' +' + plus.join(' +') : '') + (minus.length ? ' -' + minus.join(' -') : '');
+                      }
+
+                      var res = { state: 'ok', n: 0, added: 0, deleted: 0, modified: 0, moved: 0, from: 0, to: 0, summary: '', detail: '' },
+                      	pos = value.indexOf(SEP), a, b;
+
+                      if (pos < 0) {
+                      	res.state = 'baseline';
+                      	res.detail = 'Baseline: waiting for the next snapshot to compare with.';
+                      	return JSON.stringify(res);
+                      }
+                      a = parse(value.substring(0, pos));
+                      b = parse(value.substring(pos + SEP.length));
+                      if (b === null) throw 'Cannot parse the latest fingerprint snapshot.';
+                      res.to = b.ts;
+                      if (a === null) {
+                      	res.state = 'baseline';
+                      	res.detail = 'Baseline: the previous snapshot has an unknown format.';
+                      	return JSON.stringify(res);
+                      }
+                      res.from = a.ts;
+
+                      var title = b.name + ' [' + b.vdom + ']', span = fmt(a.ts) + ' and ' + fmt(b.ts),
+                      	na = a.bucket.split('/')[1], nb = b.bucket.split('/')[1];
+
+                      if (a.cfgsig !== b.cfgsig || na !== nb || a.table !== b.table || a.vdom !== b.vdom) {
+                      	res.state = 'rebaseline';
+                      	res.detail = title + ': ' + (na !== nb ? 'the table was split into ' + nb + ' snapshot parts (was ' + na + ')' :
+                      		'the ignored attributes or the object filter changed') + ' between ' + span +
+                      		'. A new baseline was taken, so changes in this interval are not compared; see "Change tracking: Recent config changes (FortiGate log)".';
+                      	return JSON.stringify(res);
+                      }
+
+                      var policy = b.ordered, changes = [], byKey = {}, i, k, ea, eb, c, groups, g;
+
+                      function label(key, lbl) {
+                      	return policy ? '#' + key + (lbl ? ' "' + lbl + '"' : '') : '"' + key + '"';
+                      }
+
+                      function change(key, lbl) {
+                      	if (!byKey.hasOwnProperty('#' + key)) {
+                      		byKey['#' + key] = { key: key, label: label(key, lbl), kinds: [], attrs: [], members: '', after: null, logs: [] };
+                      		changes.push(byKey['#' + key]);
+                      	}
+                      	return byKey['#' + key];
+                      }
+
+                      for (i = 0; i < b.order.length; i++) {
+                      	k = b.order[i];
+                      	eb = b.map['#' + k];
+                      	ea = a.map['#' + k];
+                      	if (!ea) {
+                      		change(k, eb.label).kinds.push('added');
+                      	}
+                      	else if (ea.hash !== eb.hash) {
+                      		c = change(k, eb.label);
+                      		c.kinds.push('modified');
+                      		if (ea.sig.length === eb.sig.length && a.labels.join(',') === b.labels.join(',')) {
+                      			for (g = 0; g < b.labels.length; g++) {
+                      				if (ea.sig.charAt(g) !== eb.sig.charAt(g)) c.attrs.push(b.labels[g]);
+                      			}
+                      		}
+                      		c.members = memberDiff(ea.extra, eb.extra);
+                      		if (c.members !== '') {
+                      			groups = [];
+                      			for (g = 0; g < c.attrs.length; g++) if (c.attrs[g] !== 'members') groups.push(c.attrs[g]);
+                      			c.attrs = groups;
+                      		}
+                      	}
+                      }
+                      for (i = 0; i < a.order.length; i++) {
+                      	k = a.order[i];
+                      	if (!b.map['#' + k]) change(k, a.map['#' + k].label).kinds.push('deleted');
+                      }
+
+                      if (policy) {
+                      	var common = [], seq = [], keep = {}, idx, aPos = {};
+                      	for (i = 0; i < a.order.length; i++) aPos['#' + a.order[i]] = i;
+                      	for (i = 0; i < b.order.length; i++) {
+                      		if (aPos.hasOwnProperty('#' + b.order[i])) {
+                      			common.push(b.order[i]);
+                      			seq.push(aPos['#' + b.order[i]]);
+                      		}
+                      	}
+                      	idx = lis(seq);
+                      	for (i = 0; i < idx.length; i++) keep['#' + common[idx[i]]] = true;
+                      	for (i = 0; i < common.length; i++) {
+                      		if (!keep['#' + common[i]]) {
+                      			c = change(common[i], b.map['#' + common[i]].label);
+                      			c.kinds.push('moved');
+                      			c.after = i > 0 ? label(common[i - 1], b.map['#' + common[i - 1]].label) : null;
+                      		}
+                      	}
+                      }
+
+                      /* attach config-change log entries from the latest snapshot */
+                      var logs = b.logs.slice(0), logged = 0, users = {}, tmin = 0, tmax = 0, tz = '';
+                      logs.sort(function (x, y) { return x.time - y.time; });
+                      for (i = 0; i < logs.length; i++) {
+                      	if (logs[i].time <= a.ts - LOG_TOLERANCE || logs[i].time > b.ts + LOG_TOLERANCE) continue;
+                      	logged++;
+                      	if (byKey.hasOwnProperty('#' + logs[i].key)) byKey['#' + logs[i].key].logs.push(logs[i]);
+                      }
+
+                      /* after a firmware change, report only differences confirmed by a log entry made after the previous check */
+                      var fwChanged = a.fw !== '' && b.fw !== '' && a.fw !== b.fw, suppressed = 0, reported = [];
+                      function confirmed(c) {
+                      	for (var j = 0; j < c.logs.length; j++) {
+                      		if (c.logs[j].time > a.ts) return true;
+                      	}
+                      	return false;
+                      }
+                      for (i = 0; i < changes.length; i++) {
+                      	if (fwChanged && !confirmed(changes[i])) {
+                      		suppressed++;
+                      		continue;
+                      	}
+                      	reported.push(changes[i]);
+                      }
+                      changes = reported;
+
+                      for (i = 0; i < changes.length; i++) {
+                      	c = changes[i];
+                      	c.logs = c.logs.slice(-LOG_PER_OBJECT);
+                      	if (c.kinds.indexOf('added') !== -1) res.added++;
+                      	if (c.kinds.indexOf('deleted') !== -1) res.deleted++;
+                      	if (c.kinds.indexOf('modified') !== -1) res.modified++;
+                      	if (c.kinds.indexOf('moved') !== -1) res.moved++;
+                      	for (g = 0; g < c.logs.length; g++) {
+                      		if (c.logs[g].user) users[c.logs[g].user] = true;
+                      		if (tmin === 0 || c.logs[g].time < tmin) tmin = c.logs[g].time;
+                      		if (c.logs[g].time > tmax) {
+                      			tmax = c.logs[g].time;
+                      			tz = c.logs[g].tz;
+                      		}
+                      	}
+                      }
+                      res.n = changes.length;
+
+                      /* short form for the problem name ("modified #12 "Web" (source)"), long form for the report */
+                      function describe(c, long) {
+                      	var s = long ? '[' + c.kinds.join('+').toUpperCase() + '] ' + c.label : c.kinds.join(' and ') + ' ' + c.label,
+                      		extra = [];
+                      	if (c.attrs.length) extra.push((long ? 'changed: ' : '') + c.attrs.join(', '));
+                      	if (c.members) extra.push(c.members);
+                      	if (long && c.kinds.indexOf('moved') !== -1) extra.push(c.after !== null ? 'now after ' + c.after : 'now first');
+                      	return s + (extra.length ? ' (' + extra.join('; ') + ')' : '');
+                      }
+
+                      /* summary: used in the problem name */
+                      if (res.n > 0) {
+                      	var parts = [], who = Object.keys(users).sort(), s;
+                      	for (i = 0; i < changes.length && i < SUMMARY_ITEMS; i++) parts.push(describe(changes[i], false));
+                      	s = (res.n > 1 ? res.n + ' changes: ' : '') + parts.join('; ') +
+                      		(res.n > SUMMARY_ITEMS ? '; +' + (res.n - SUMMARY_ITEMS) + ' more' : '');
+                      	if (who.length) {
+                      		s += ' | by ' + who.slice(0, 3).join(', ') + (who.length > 3 ? ' +' + (who.length - 3) : '') +
+                      			' at ' + fmt(tmin, tz, true) + (fmt(tmax, tz, true) !== fmt(tmin, tz, true) ? '-' + fmt(tmax, tz, true) : '');
+                      	}
+                      	if (s.length > SUMMARY_MAX) s = s.substring(0, SUMMARY_MAX - 3) + '...';
+                      	res.summary = s;
+                      }
+
+                      /* detail: the full report shown in Latest data and in the problem */
+                      var lines = [], size = 0;
+                      lines.push(title + ': ' + (res.n === 0 ? 'no changes' : res.n + ' change' + (res.n > 1 ? 's' : '') +
+                      	' (' + res.added + ' added, ' + res.modified + ' modified, ' + res.deleted + ' deleted' +
+                      	(policy ? ', ' + res.moved + ' moved' : '') + ')') + ' between ' + span + ' (Zabbix server time).');
+                      if (fwChanged) {
+                      	lines.push('FortiOS changed from ' + a.fw + ' to ' + b.fw + (suppressed > 0 ? ': ' + suppressed +
+                      		' fingerprint difference(s) without a matching config-change log entry were treated as firmware related and not reported.' : '.'));
+                      }
+                      for (i = 0; i < changes.length; i++) {
+                      	c = changes[i];
+                      	var line = describe(c, true);
+                      	size += line.length + 1;
+                      	if (size > DETAIL_MAX) {
+                      		lines.push('... ' + (changes.length - i) + ' more change(s) not shown.');
+                      		break;
+                      	}
+                      	lines.push(line);
+                      	if (c.logs.length === 0) {
+                      		lines.push('    (no config-change log entry for this object in the interval)');
+                      	}
+                      	for (g = 0; g < c.logs.length; g++) {
+                      		var l = c.logs[g];
+                      		line = '    ' + fmt(l.time, l.tz) + (l.tz ? ' ' + l.tz : '') + ' ' + l.action + ' by ' + (l.user || '?') +
+                      			(l.ui ? ' via ' + l.ui : '') + (l.attr ? ': ' + l.attr : '');
+                      		size += line.length + 1;
+                      		lines.push(line);
+                      	}
+                      }
+                      if (res.n === 0 && logged > 0) {
+                      	lines.push(logged + ' config-change log entr' + (logged > 1 ? 'ies' : 'y') +
+                      		' in the interval without a net configuration difference (changed back, or no effective change).');
+                      }
+                      res.detail = lines.join('\n');
+
+                      return JSON.stringify(res);
+                - type: DISCARD_UNCHANGED
+                  parameters:
+                    - ''
+              tags:
+                - tag: component
+                  value: raw
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+            - uuid: '0dff8a12e5ea497b9d782a6de1218102'
+              name: '{#TABLE.NAME} [{#VDOM}]{#PART}: Change summary'
+              type: DEPENDENT
+              key: 'fgate.chg.summary[{#VDOM},{#TABLE},{#BUCKET}]'
+              delay: '0'
+              history: '{$FGATE.CHG.HISTORY}'
+              value_type: TEXT
+              trends: '0'
+              description: 'Short list of the objects changed since the previous check (empty when nothing changed). Used in the problem name.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.summary'
+              master_item:
+                key: 'fgate.chg.diff[{#VDOM},{#TABLE},{#BUCKET}]'
+              tags:
+                - tag: component
+                  value: config-change
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+              trigger_prototypes:
+                - uuid: d2eb7fca2bb14d3ebd7f2154e58590f3
+                  expression: '{$FGATE.CHG.ALERT:"{#TABLE}"}=1 and length(last(/FortiGate Extended Rule and Object Changes by HTTP/fgate.chg.summary[{#VDOM},{#TABLE},{#BUCKET}]))>0'
+                  name: 'Config change: {#TABLE.NAME} [{#VDOM}]{#PART}'
+                  event_name: '{#TABLE.NAME} changed [{#VDOM}]: {ITEM.VALUE}'
+                  priority: INFO
+                  type: MULTIPLE
+                  description: 'Objects in {#TABLE.NAME} (VDOM {#VDOM}) were added, deleted, modified or moved since the previous check. The item "{#TABLE.NAME} [{#VDOM}]{#PART}: Change details" has the full report with time, admin and changed attributes from the FortiGate config-change log. The problem resolves at the next check without changes.'
+                  manual_close: 'YES'
+                  tags:
+                    - tag: component
+                      value: config-change
+                    - tag: scope
+                      value: notice
+                    - tag: table
+                      value: '{#TABLE}'
+                    - tag: vdom
+                      value: '{#VDOM}'
+            - uuid: '7439fac08984422480050483373027a5'
+              name: '{#TABLE.NAME} [{#VDOM}]{#PART}: Change details'
+              type: DEPENDENT
+              key: 'fgate.chg.detail[{#VDOM},{#TABLE},{#BUCKET}]'
+              delay: '0'
+              history: '{$FGATE.CHG.HISTORY}'
+              value_type: TEXT
+              trends: '0'
+              description: 'Full change report of the last check: every changed object with the changed attribute groups and the matching config-change log entries (time, admin, interface, attributes).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.detail'
+              master_item:
+                key: 'fgate.chg.diff[{#VDOM},{#TABLE},{#BUCKET}]'
+              tags:
+                - tag: component
+                  value: config-change
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+            - uuid: '3a6eff9c32d5428d8aaf781af68dfc75'
+              name: '{#TABLE.NAME} [{#VDOM}]{#PART}: Changes in last check'
+              type: DEPENDENT
+              key: 'fgate.chg.changes[{#VDOM},{#TABLE},{#BUCKET}]'
+              delay: '0'
+              history: '{$FGATE.CHG.HISTORY}'
+              description: Number of objects changed since the previous check.
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.n'
+              master_item:
+                key: 'fgate.chg.diff[{#VDOM},{#TABLE},{#BUCKET}]'
+              tags:
+                - tag: component
+                  value: config-change
+                - tag: table
+                  value: '{#TABLE}'
+                - tag: vdom
+                  value: '{#VDOM}'
+          master_item:
+            key: fgate.chg.get
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.buckets'
+              error_handler: DISCARD_VALUE
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: fortigate
+        - tag: target
+          value: fortinet
+      macros:
+        - macro: '{$FGATE.CHG.ALERT}'
+          value: '1'
+          description: 'Set to 0 to disable the config-change problems. Use the table as context to disable one table only, for example {$FGATE.CHG.ALERT:"firewall.address"}=0.'
+        - macro: '{$FGATE.CHG.DIFF.INTERVAL}'
+          value: '5m'
+          description: 'How often the calculated items compare the two latest snapshots. Only sets how soon after a collection a change is reported; it does not query the FortiGate.'
+        - macro: '{$FGATE.CHG.HISTORY}'
+          value: '7d'
+          description: 'History storage period of the change summaries, details and counts (at least 1d).'
+        - macro: '{$FGATE.CHG.IGNORE.ATTRS}'
+          value: 'list,dirty,uuid-idx'
+          description: 'Comma-separated object attributes that are not compared. "list" holds the IP addresses that SDN/fabric connectors resolve for dynamic addresses and changes by itself; "dirty" and "uuid-idx" are internal. Add for example color to ignore cosmetic changes. Changing it starts a new baseline.'
+        - macro: '{$FGATE.CHG.INTERVAL}'
+          value: '1h'
+          description: How often the configuration snapshot is read from the FortiGate.
+        - macro: '{$FGATE.CHG.LOG.LOOKBACK}'
+          value: '24h'
+          description: 'How far back the config-change log is read. Must be longer than {$FGATE.CHG.INTERVAL}.'
+        - macro: '{$FGATE.CHG.LOG.MAXROWS}'
+          value: '1000'
+          description: Maximum number of config-change log rows read per VDOM and collection.
+        - macro: '{$FGATE.CHG.LOG.SOURCE}'
+          value: auto
+          description: 'Where the config-change log is read: auto (first enabled of disk, memory, fortianalyzer, forticloud), disk, memory, fortianalyzer, forticloud, or none to not read the log.'
+        - macro: '{$FGATE.CHG.NODATA}'
+          value: '2h30m'
+          description: Raise the no-data problem when no snapshot was collected for this long. The default allows one missed hourly collection.
+        - macro: '{$FGATE.CHG.OBJECT.NOT_MATCHES}'
+          value: CHANGE_IF_NEEDED
+          description: 'Regular expression for objects that are not tracked, matched against "<table>:<key>", for example ^firewall\.address:SDN_ or ^firewall\.policy:(100|101)$. Changing it starts a new baseline.'
+        - macro: '{$FGATE.CHG.SNAPSHOT.HISTORY}'
+          value: '1d'
+          description: 'History storage period of the fingerprint snapshots. Must be longer than {$FGATE.CHG.INTERVAL}; the comparison needs the previous snapshot.'
+        - macro: '{$FGATE.CHG.TABLES}'
+          value: 'firewall/policy,firewall/address,firewall/address6,firewall/addrgrp,firewall/addrgrp6,firewall.service/custom,firewall.service/group'
+          description: 'Comma-separated FortiOS cmdb paths to track. Also supported: firewall/vip, firewall/vipgrp, firewall/local-in-policy, firewall/proxy-policy, firewall/security-policy, firewall/central-snat-map, firewall/ippool, firewall.schedule/recurring, firewall.schedule/onetime, firewall.schedule/group, firewall/internet-service-custom.'
+        - macro: '{$FGATE.CHG.TIMEOUT}'
+          value: '120s'
+          description: 'Timeout of the snapshot script (all API requests of one collection).'
+        - macro: '{$FGATE.CHG.VDOM.MATCHES}'
+          value: '.*'
+          description: Regular expression for the VDOMs to track.
+        - macro: '{$FGATE.CHG.VDOM.NOT_MATCHES}'
+          value: '^vsys_'
+          description: 'Regular expression for VDOMs not to track. The default skips the internal vsys_* management VDOMs.'
+        - macro: '{$FGATE.CHG.VDOMS}'
+          value: '*'
+          description: 'Comma-separated VDOM names to track, or * to track all VDOMs the API admin can list (falls back to root).'
+      dashboards:
+        - uuid: '60ac4030fe274cf5bc5cc39abc9c7a5f'
+          name: 'FortiGate: Rule and object changes'
+          pages:
+            - name: Changes
+              widgets:
+                - type: problems
+                  name: Current and recent rule and object changes
+                  x: '0'
+                  'y': '0'
+                  width: '72'
+                  height: '6'
+                  fields:
+                    - type: INTEGER
+                      name: show
+                      value: '1'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '3'
+                    - type: STRING
+                      name: tag_priority
+                      value: 'table,vdom'
+                    - type: INTEGER
+                      name: evaltype
+                      value: '2'
+                    - type: STRING
+                      name: tags.0.tag
+                      value: component
+                    - type: INTEGER
+                      name: tags.0.operator
+                      value: '1'
+                    - type: STRING
+                      name: tags.0.value
+                      value: config-change
+                    - type: STRING
+                      name: tags.1.tag
+                      value: component
+                    - type: INTEGER
+                      name: tags.1.operator
+                      value: '1'
+                    - type: STRING
+                      name: tags.1.value
+                      value: config-collector
+                    - type: STRING
+                      name: reference
+                      value: FGCPR
+                - type: problems
+                  name: 'Change history (selected time period)'
+                  x: '0'
+                  'y': '6'
+                  width: '72'
+                  height: '8'
+                  fields:
+                    - type: INTEGER
+                      name: show
+                      value: '2'
+                    - type: INTEGER
+                      name: show_tags
+                      value: '3'
+                    - type: STRING
+                      name: tag_priority
+                      value: 'table,vdom'
+                    - type: STRING
+                      name: tags.0.tag
+                      value: component
+                    - type: INTEGER
+                      name: tags.0.operator
+                      value: '1'
+                    - type: STRING
+                      name: tags.0.value
+                      value: config-change
+                    - type: INTEGER
+                      name: show_lines
+                      value: '50'
+                    - type: STRING
+                      name: reference
+                      value: FGCHI
+                - type: itemhistory
+                  name: 'Recent config changes (FortiGate log)'
+                  x: '0'
+                  'y': '14'
+                  width: '72'
+                  height: '7'
+                  fields:
+                    - type: STRING
+                      name: columns.0.name
+                      value: Config-change log entries
+                    - type: ITEM
+                      name: columns.0.itemid
+                      value:
+                        host: FortiGate Extended Rule and Object Changes by HTTP
+                        key: fgate.chg.recent
+                    - type: INTEGER
+                      name: columns.0.monospace_font
+                      value: '1'
+                    - type: INTEGER
+                      name: show_column_header
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '1'
+                    - type: STRING
+                      name: reference
+                      value: FGCRL
+                - type: svggraph
+                  name: Number of objects per table
+                  x: '0'
+                  'y': '21'
+                  width: '36'
+                  height: '8'
+                  fields:
+                    - type: INTEGER
+                      name: ds.0.dataset_type
+                      value: '1'
+                    - type: STRING
+                      name: ds.0.items.0
+                      value: '*: Number of objects'
+                    - type: STRING
+                      name: ds.0.color
+                      value: '1E88E5'
+                    - type: INTEGER
+                      name: ds.0.fill
+                      value: '0'
+                    - type: INTEGER
+                      name: ds.0.width
+                      value: '2'
+                    - type: INTEGER
+                      name: legend_lines
+                      value: '4'
+                    - type: STRING
+                      name: reference
+                      value: FGCOB
+                - type: item
+                  name: Last successful collection
+                  x: '36'
+                  'y': '21'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: FortiGate Extended Rule and Object Changes by HTTP
+                        key: fgate.chg.lastcheck
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '12'
+                - type: item
+                  name: Monitored objects
+                  x: '54'
+                  'y': '21'
+                  width: '18'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: FortiGate Extended Rule and Object Changes by HTTP
+                        key: fgate.chg.objects
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: show.1
+                      value: '3'
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: INTEGER
+                      name: value_size
+                      value: '30'
+                    - type: INTEGER
+                      name: time_size
+                      value: '12'
+                - type: item
+                  name: Config-change log
+                  x: '36'
+                  'y': '25'
+                  width: '36'
+                  height: '4'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: FortiGate Extended Rule and Object Changes by HTTP
+                        key: fgate.chg.log.info
+                    - type: INTEGER
+                      name: show.0
+                      value: '2'
+                    - type: INTEGER
+                      name: value_size
+                      value: '9'
+                - type: itemhistory
+                  name: Collector errors
+                  x: '0'
+                  'y': '29'
+                  width: '72'
+                  height: '4'
+                  fields:
+                    - type: STRING
+                      name: columns.0.name
+                      value: Errors
+                    - type: ITEM
+                      name: columns.0.itemid
+                      value:
+                        host: FortiGate Extended Rule and Object Changes by HTTP
+                        key: fgate.chg.errors
+                    - type: INTEGER
+                      name: show_column_header
+                      value: '1'
+                    - type: INTEGER
+                      name: show_timestamp
+                      value: '1'
+                    - type: INTEGER
+                      name: show_lines
+                      value: '3'
+                    - type: STRING
+                      name: reference
+                      value: FGCER
+      valuemaps:
+        - uuid: '0519db1b5a0f47f19ba270734dae0454'
+          name: FortiGate config-change log status
+          mappings:
+            - value: '0'
+              newvalue: Unavailable
+            - value: '1'
+              newvalue: OK
+            - value: '2'
+              newvalue: Disabled
+  triggers:
+    - uuid: '4f34a40dac9a4df592d9672ce4c5061a'
+      expression: 'last(/FortiGate Extended Rule and Object Changes by HTTP/fgate.chg.log.status)=0 and length(last(/FortiGate Extended Rule and Object Changes by HTTP/fgate.chg.log.info))>=0'
+      name: 'FortiGate config-change log cannot be read: changes are reported without who and when'
+      event_name: 'FortiGate config-change log cannot be read ({ITEM.VALUE2}): changes are reported without who and when'
+      priority: INFO
+      description: 'Changes are still detected from the snapshots, but the reports do not include the admin, time and changed attributes. Check that the API admin profile has read access to Log & Report and that {$FGATE.CHG.LOG.SOURCE} matches where the FortiGate stores its logs, or set it to none.'
+      tags:
+        - tag: component
+          value: config-collector
+        - tag: scope
+          value: notice
